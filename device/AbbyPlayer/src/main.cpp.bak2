@@ -1,0 +1,144 @@
+#include <iostream>
+#include <vector>
+#include <string>
+#include <cstring>
+#include <csignal>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
+#include <thread>
+
+#include "HardwareID.hpp"
+#include "CryptoEngine.hpp"
+#include "FileHandler.hpp"
+#include "AudioPlayer.hpp"
+
+#define SOCKET_PATH "/tmp/piramid.sock"
+
+bool g_running = true;
+
+void signalHandler(int signum) {
+    g_running = false;
+}
+
+void runCliMode(AudioPlayer& player) {
+    std::string command;
+    // Assuming execution from project root (~/Dev/Piramid)
+    std::string mockFileEncoded = "device/audio/hello.pira";
+
+    std::cout << "\n--- Piramid CLI Mode ---" << std::endl;
+    std::cout << "Commands: [p]lay, [s]top, [?]status, [q]uit" << std::endl;
+
+    while (g_running) {
+        std::cout << "> ";
+        if (!(std::cin >> command)) break;
+
+        if (command == "q") {
+            break;
+        } else if (command == "p") {
+            player.play(mockFileEncoded);
+        } else if (command == "s") {
+            player.stop();
+        } else if (command == "?") {
+            std::cout << player.getStatus() << std::endl;
+        } else {
+            std::cout << "Unknown command." << std::endl;
+        }
+    }
+}
+
+void runHeadlessMode(AudioPlayer& player) {
+    std::cout << "\n--- Piramid Headless Mode ---" << std::endl;
+    
+    // 1. Create Socket
+    int server_fd;
+    struct sockaddr_un address;
+
+    if ((server_fd = socket(AF_UNIX, SOCK_STREAM, 0)) == 0) {
+        perror("socket failed");
+        exit(EXIT_FAILURE);
+    }
+
+    address.sun_family = AF_UNIX;
+    strncpy(address.sun_path, SOCKET_PATH, sizeof(address.sun_path) - 1);
+    unlink(SOCKET_PATH); // Remove previous if exists
+
+    if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
+        perror("bind failed");
+        exit(EXIT_FAILURE);
+    }
+
+    if (listen(server_fd, 5) < 0) {
+        perror("listen failed");
+        exit(EXIT_FAILURE);
+    }
+
+    std::cout << "Listening on " << SOCKET_PATH << "..." << std::endl;
+
+    // 2. Command Loop
+    // For specific async behavior with multiple clients, select/poll would be needed.
+    // For this prototype, we handle one connection at a time, execute command, and close (HTTP-like) or keep open.
+    // Let's implement a simple Keep-Alive loop per connection.
+
+    while (g_running) {
+        int client_fd;
+        // Non-blocking accept could be better but blocking is fine for threaded Player
+        if ((client_fd = accept(server_fd, NULL, NULL)) < 0) {
+            if (g_running) perror("accept failed");
+            continue;
+        }
+
+        char buffer[1024] = {0};
+        int valread = read(client_fd, buffer, 1024);
+        if (valread > 0) {
+            std::string msg(buffer);
+            // Trim newline
+            if (!msg.empty() && msg.back() == '\n') msg.pop_back();
+            if (!msg.empty() && msg.back() == '\r') msg.pop_back(); // Handle CRLF
+
+            std::cout << "[IPC] Received: " << msg << std::endl;
+
+            std::string response = "OK\n";
+
+            if (msg.rfind("PLAY ", 0) == 0) {
+                std::string path = msg.substr(5);
+                player.play(path);
+            } else if (msg == "STOP") {
+                player.stop();
+            } else if (msg == "STATUS") {
+                response = player.getStatus() + "\n";
+            } else if (msg == "QUIT") {
+                g_running = false;
+            } else {
+                response = "UNKNOWN COMMAND\n";
+            }
+
+            send(client_fd, response.c_str(), response.length(), 0);
+        }
+        close(client_fd);
+    }
+
+    close(server_fd);
+    unlink(SOCKET_PATH);
+}
+
+int main(int argc, char* argv[]) {
+    signal(SIGINT, signalHandler);
+    signal(SIGTERM, signalHandler);
+
+    AudioPlayer player;
+    bool headless = false;
+
+    if (argc > 1 && std::string(argv[1]) == "--headless") {
+        headless = true;
+    }
+
+    if (headless) {
+        runHeadlessMode(player);
+    } else {
+        runCliMode(player);
+    }
+
+    player.stop();
+    return 0;
+}

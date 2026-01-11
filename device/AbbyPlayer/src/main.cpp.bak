@@ -1,0 +1,47 @@
+#include <iostream>
+#include <vector>
+#include "HardwareID.hpp"
+#include "CryptoEngine.hpp"
+#include "FileHandler.hpp"
+#include "AudioPlayer.hpp"
+
+void printHex(const std::string& label, const std::vector<unsigned char>& data) {
+    std::cout << label << ": ";
+    for(auto b : data) printf("%02x", b);
+    std::cout << std::endl;
+}
+
+int main() {
+    // --- INTERACTIVE CLI MODE ---
+    AudioPlayer player;
+    std::string command;
+    // Assuming execution from project root (~/Dev/Piramid)
+    std::string mockFileEncoded = "device/audio/hello.pira";
+
+    std::cout << "\n--- Piramid CLI Mode ---" << std::endl;
+    std::cout << "Commands: [p]lay, [s]top, [?]status, [q]uit" << std::endl;
+
+    while (true) {
+        std::cout << "> ";
+        std::cin >> command;
+
+        if (command == "q") {
+            break;
+        } else if (command == "p") {
+            // Check if file exists/is encrypted?
+            // For prototype optimization, we just point to the encrypted file
+            // real logic would verify header first.
+            player.play(mockFileEncoded);
+        } else if (command == "s") {
+            player.stop();
+        } else if (command == "?") {
+            std::cout << player.getStatus() << std::endl;
+        } else {
+            std::cout << "Unknown command." << std::endl;
+        }
+    }
+    
+    player.stop(); // Safe shutdown
+    std::cout << "Exiting." << std::endl;
+    return 0;
+}

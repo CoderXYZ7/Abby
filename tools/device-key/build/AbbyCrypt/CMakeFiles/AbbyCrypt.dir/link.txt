@@ -1,0 +1,2 @@
+/usr/bin/ar qc libAbbyCrypt.a CMakeFiles/AbbyCrypt.dir/src/CryptoEngine.cpp.o CMakeFiles/AbbyCrypt.dir/src/FileHandler.cpp.o CMakeFiles/AbbyCrypt.dir/src/HardwareID.cpp.o CMakeFiles/AbbyCrypt.dir/src/AbbyCrypt.cpp.o
+/usr/bin/ranlib libAbbyCrypt.a

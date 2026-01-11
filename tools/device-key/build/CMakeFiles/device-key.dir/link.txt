@@ -1,0 +1,1 @@
+/usr/bin/c++ "CMakeFiles/device-key.dir/device-key.cpp.o" -o device-key  AbbyCrypt/libAbbyCrypt.a -lssl -lcrypto -lpthread -ldl 
