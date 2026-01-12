@@ -5,9 +5,11 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 add_subdirectory(../AbbyCrypt ${CMAKE_CURRENT_BINARY_DIR}/AbbyCrypt)
+add_subdirectory(../../libs/abby-client ${CMAKE_CURRENT_BINARY_DIR}/abby-client)
 
 include_directories(include)
 include_directories(../AbbyCrypt/include)
+include_directories(../../libs/abby-client/include)
 
 add_executable(AbbyPlayer
     src/main.cpp
@@ -24,6 +26,7 @@ find_package(GLEW REQUIRED)
 # Link libraries
 target_link_libraries(AbbyPlayer 
     AbbyCrypt
+    abby-client
     ${SDL2_LIBRARIES}
     OpenGL::GL
     GLEW::GLEW

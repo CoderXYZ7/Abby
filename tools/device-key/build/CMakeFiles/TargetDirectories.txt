@@ -1,6 +1,0 @@
-/home/maintainer/Dev/Piramid/tools/device-key/build/CMakeFiles/device-key.dir
-/home/maintainer/Dev/Piramid/tools/device-key/build/CMakeFiles/edit_cache.dir
-/home/maintainer/Dev/Piramid/tools/device-key/build/CMakeFiles/rebuild_cache.dir
-/home/maintainer/Dev/Piramid/tools/device-key/build/AbbyCrypt/CMakeFiles/AbbyCrypt.dir
-/home/maintainer/Dev/Piramid/tools/device-key/build/AbbyCrypt/CMakeFiles/edit_cache.dir
-/home/maintainer/Dev/Piramid/tools/device-key/build/AbbyCrypt/CMakeFiles/rebuild_cache.dir

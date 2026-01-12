@@ -13,6 +13,7 @@
 #include "AbbyCrypt.hpp"
 #include "AudioPlayer.hpp"
 #include "ShaderVisualizer.hpp"
+#include "AbbyClient.hpp"
 
 #define SOCKET_PATH "/tmp/abby.sock"
 
@@ -21,36 +22,11 @@ std::shared_ptr<ShaderVisualizer> g_visuals = nullptr;
 std::thread g_visualsThread;
 std::atomic<bool> g_visualsRunning{false};
 
-// --- CLIENT MODE (Executes single command via socket) ---
-void runClientMode(const std::string& cmd, const std::string& arg = "") {
-    int sock = 0;
-    struct sockaddr_un serv_addr;
-    char buffer[1024] = {0};
-
-    if ((sock = socket(AF_UNIX, SOCK_STREAM, 0)) < 0) {
-        std::cerr << "Socket creation error" << std::endl;
-        return;
-    }
-
-    serv_addr.sun_family = AF_UNIX;
-    strncpy(serv_addr.sun_path, SOCKET_PATH, sizeof(serv_addr.sun_path) - 1);
-
-    if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
-        std::cerr << "Connection Failed. Is the daemon running? (Run: AbbyPlayer --daemon)" << std::endl;
-        return;
-    }
-
-    std::string message = cmd;
-    if (!arg.empty()) {
-        message += " " + arg;
-    }
-
-    send(sock, message.c_str(), message.length(), 0);
-    int valread = read(sock, buffer, 1024);
-    if(valread > 0) {
-        std::cout << buffer;
-    }
-    close(sock);
+// --- CLIENT MODE (Uses libabby-client) ---
+void runClientMode(const std::string& cmd) {
+    Abby::AbbyClient client;
+    std::string result = client.sendCommand(cmd);
+    std::cout << result << std::endl;
 }
 
 // --- DAEMON MODE logic ---
@@ -231,7 +207,7 @@ int main(int argc, char* argv[]) {
             std::cout << "Error: play requires a file path.\n";
             return 1;
         }
-        runClientMode("play", argv[2]);
+        runClientMode("play " + std::string(argv[2]));
     }
     else if (arg1 == "stop") {
         runClientMode("stop");
