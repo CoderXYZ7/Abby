@@ -33,7 +33,8 @@ void data_callback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uin
 } 
 
 AudioPlayer::AudioPlayer() 
-    : m_isPlaying(false), m_stopSignal(false), m_totalChunks(0), m_currentChunkIndex(0) {
+    : m_isPlaying(false), m_isPaused(false), m_stopSignal(false), m_volume(1.0f),
+      m_totalChunks(0), m_currentChunkIndex(0) {
     m_analyzer = std::make_shared<FrequencyAnalyzer>();
 }
 
@@ -178,6 +179,42 @@ void AudioPlayer::stop() {
     }
 }
 
+void AudioPlayer::pause() {
+    if (m_isPlaying && !m_isPaused && g_ctx.initialized) {
+        ma_device_stop(&g_ctx.device);
+        m_isPaused = true;
+        std::cout << "[AudioPlayer] Paused" << std::endl;
+    }
+}
+
+void AudioPlayer::resume() {
+    if (m_isPlaying && m_isPaused && g_ctx.initialized) {
+        ma_device_start(&g_ctx.device);
+        m_isPaused = false;
+        std::cout << "[AudioPlayer] Resumed" << std::endl;
+    }
+}
+
+void AudioPlayer::seek(float seconds) {
+    if (!g_ctx.initialized) return;
+    
+    ma_uint64 targetFrame = (ma_uint64)(seconds * g_ctx.decoder.outputSampleRate);
+    ma_decoder_seek_to_pcm_frame(&g_ctx.decoder, targetFrame);
+    std::cout << "[AudioPlayer] Seeked to " << seconds << "s" << std::endl;
+}
+
+void AudioPlayer::setVolume(float volume) {
+    m_volume = (volume < 0.0f) ? 0.0f : (volume > 1.0f) ? 1.0f : volume;
+    if (g_ctx.initialized) {
+        ma_device_set_master_volume(&g_ctx.device, m_volume);
+    }
+    std::cout << "[AudioPlayer] Volume set to " << (int)(m_volume * 100) << "%" << std::endl;
+}
+
+float AudioPlayer::getVolume() const {
+    return m_volume;
+}
+
 std::string AudioPlayer::getStatus() {
     std::stringstream ss;
     if (m_isPlaying && g_ctx.initialized) {
@@ -188,7 +225,11 @@ std::string AudioPlayer::getStatus() {
         float currentSec = (float)cursor / (float)g_ctx.decoder.outputSampleRate;
         float totalSec = (float)total / (float)g_ctx.decoder.outputSampleRate;
         
-        ss << "PLAYING [" << (int)currentSec << "s / " << (int)totalSec << "s]";
+        if (m_isPaused) {
+            ss << "PAUSED [" << (int)currentSec << "s / " << (int)totalSec << "s]";
+        } else {
+            ss << "PLAYING [" << (int)currentSec << "s / " << (int)totalSec << "s]";
+        }
     } else {
         if (!m_lastError.empty()) {
             ss << "ERROR: " << m_lastError;
@@ -201,9 +242,11 @@ std::string AudioPlayer::getStatus() {
 
 AudioPlayer::PlaybackState AudioPlayer::getPlaybackState() {
     PlaybackState state;
-    state.isPlaying = m_isPlaying && g_ctx.initialized;
+    state.isPlaying = m_isPlaying && g_ctx.initialized && !m_isPaused;
+    state.isPaused = m_isPaused;
+    state.volume = m_volume;
     
-    if (state.isPlaying) {
+    if (m_isPlaying && g_ctx.initialized) {
         ma_uint64 cursor, total;
         ma_decoder_get_cursor_in_pcm_frames(&g_ctx.decoder, &cursor);
         ma_decoder_get_length_in_pcm_frames(&g_ctx.decoder, &total);

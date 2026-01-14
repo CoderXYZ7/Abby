@@ -90,6 +90,36 @@ bool AbbyClient::stop() {
     return resp.find("ERROR") == std::string::npos;
 }
 
+bool AbbyClient::pause() {
+    std::string resp = sendCommand("pause");
+    return resp.find("ERROR") == std::string::npos;
+}
+
+bool AbbyClient::resume() {
+    std::string resp = sendCommand("resume");
+    return resp.find("ERROR") == std::string::npos;
+}
+
+bool AbbyClient::seek(float seconds) {
+    std::string resp = sendCommand("seek " + std::to_string(seconds));
+    return resp.find("ERROR") == std::string::npos;
+}
+
+bool AbbyClient::setVolume(float volume) {
+    std::string resp = sendCommand("volume " + std::to_string(volume));
+    return resp.find("ERROR") == std::string::npos;
+}
+
+int AbbyClient::getVolume() {
+    std::string resp = sendCommand("volume");
+    // Parse "XX%" response
+    try {
+        return std::stoi(resp);
+    } catch (...) {
+        return -1;
+    }
+}
+
 std::string AbbyClient::getStatus() {
     return sendCommand("status");
 }

@@ -5,6 +5,7 @@
 #include <FL/Fl_Input.H>
 #include <FL/Fl_Output.H>
 #include <FL/Fl_File_Chooser.H>
+#include <FL/Fl_Slider.H>
 #include <FL/fl_draw.H>
 #include <FL/fl_ask.H>
 
@@ -46,6 +47,10 @@ class AbbyWindow : public Fl_Window {
     Fl_Box* statusBox;
     Fl_Output* encryptionStatus;
     Fl_Input* serialInput;
+    Fl_Slider* volumeSlider;
+    Fl_Slider* progressSlider;
+    float totalDuration = 0.0f;
+    bool userSeeking = false;
     
 public:
     AbbyWindow(int w, int h, const char* title) : Fl_Window(w, h, title) {
@@ -60,23 +65,44 @@ public:
         // Controls Group
         int y = 60;
         
-        Fl_Button* btnSelect = new Fl_Button(20, y, 160, 40, "SELECT FILE");
+        Fl_Button* btnSelect = new Fl_Button(20, y, 120, 40, "SELECT");
         btnSelect->color(fl_rgb_color(60, 160, 60));
         btnSelect->labelcolor(FL_WHITE);
         btnSelect->callback(cb_select, this);
         
-        Fl_Button* btnStop = new Fl_Button(200, y, 100, 40, "STOP");
+        Fl_Button* btnPause = new Fl_Button(150, y, 80, 40, "PAUSE");
+        btnPause->color(fl_rgb_color(200, 160, 40));
+        btnPause->labelcolor(FL_WHITE);
+        btnPause->callback(cb_pause);
+        
+        Fl_Button* btnStop = new Fl_Button(240, y, 80, 40, "STOP");
         btnStop->color(fl_rgb_color(160, 60, 60));
         btnStop->labelcolor(FL_WHITE);
         btnStop->callback(cb_stop);
         
-        Fl_Button* btnVis = new Fl_Button(320, y, 140, 40, "TOGGLE VIZ");
+        Fl_Button* btnVis = new Fl_Button(330, y, 140, 40, "TOGGLE VIZ");
         btnVis->color(fl_rgb_color(200, 120, 40));
         btnVis->labelcolor(FL_WHITE);
         btnVis->callback(cb_visuals);
         
-        y += 60;
+        y += 50;
         
+        // Volume slider
+        Fl_Box* volLabel = new Fl_Box(20, y, 60, 30, "Vol:");
+        volLabel->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+        volLabel->labelcolor(FL_WHITE);
+        
+        volumeSlider = new Fl_Slider(80, y, w-120, 30);
+        volumeSlider->type(FL_HOR_NICE_SLIDER);
+        volumeSlider->bounds(0.0, 1.0);
+        volumeSlider->value(1.0);
+        volumeSlider->color(fl_rgb_color(60, 60, 60));
+        volumeSlider->selection_color(fl_rgb_color(100, 200, 100));
+        volumeSlider->callback(cb_volume, this);
+        
+        y += 40;
+        
+        // Shader controls
         Fl_Button* btnPrev = new Fl_Button(20, y, 140, 40, "PREV SHADER");
         btnPrev->color(fl_rgb_color(80, 80, 180));
         btnPrev->labelcolor(FL_WHITE);
@@ -87,20 +113,31 @@ public:
         btnNext->labelcolor(FL_WHITE);
         btnNext->callback(cb_next);
         
-        y += 60;
+        y += 50;
         
         // Status Group
         Fl_Box* statusLabel = new Fl_Box(20, y, w-40, 20, "Status:");
         statusLabel->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
         statusLabel->labelcolor(FL_WHITE);
         
-        statusBox = new Fl_Box(20, y+25, w-40, 60, "Connecting...");
+        statusBox = new Fl_Box(20, y+25, w-40, 40, "Connecting...");
         statusBox->box(FL_FLAT_BOX);
         statusBox->color(fl_rgb_color(30, 30, 30));
         statusBox->labelcolor(fl_rgb_color(100, 255, 100));
         statusBox->align(FL_ALIGN_CENTER | FL_ALIGN_INSIDE);
         
-        y += 110;
+        y += 75;
+        
+        // Progress slider (seek bar)
+        progressSlider = new Fl_Slider(20, y, w-40, 25);
+        progressSlider->type(FL_HOR_NICE_SLIDER);
+        progressSlider->bounds(0.0, 1.0);
+        progressSlider->value(0.0);
+        progressSlider->color(fl_rgb_color(50, 50, 50));
+        progressSlider->selection_color(fl_rgb_color(80, 180, 255));
+        progressSlider->callback(cb_seek, this);
+        
+        y += 40;
         
         // Remote Encryption Group
         Fl_Box* encLabel = new Fl_Box(20, y, w-40, 20, "Target Device Encryption:");
@@ -153,6 +190,33 @@ public:
     static void cb_prev(Fl_Widget*, void*) { sendCommand("shader prev"); }
     static void cb_next(Fl_Widget*, void*) { sendCommand("shader next"); }
     
+    static void cb_pause(Fl_Widget* w, void*) {
+        std::string status = sendCommand("status");
+        if (status.find("PAUSED") != std::string::npos) {
+            sendCommand("resume");
+            ((Fl_Button*)w)->label("PAUSE");
+        } else if (status.find("PLAYING") != std::string::npos) {
+            sendCommand("pause");
+            ((Fl_Button*)w)->label("RESUME");
+        }
+    }
+    
+    static void cb_volume(Fl_Widget* w, void* data) {
+        Fl_Slider* slider = (Fl_Slider*)w;
+        float vol = slider->value();
+        sendCommand("volume " + std::to_string(vol));
+    }
+    
+    static void cb_seek(Fl_Widget* w, void* data) {
+        AbbyWindow* win = (AbbyWindow*)data;
+        Fl_Slider* slider = (Fl_Slider*)w;
+        
+        if (win->totalDuration > 0) {
+            float seekTime = slider->value() * win->totalDuration;
+            sendCommand("seek " + std::to_string(seekTime));
+        }
+    }
+    
     static void cb_visuals(Fl_Widget*, void*) {
         std::string s = sendCommand("visuals status");
         if (s.find("STOPPED") != std::string::npos) sendCommand("visuals start");
@@ -199,14 +263,33 @@ public:
         std::string status = sendCommand("status");
         
         static char buffer[256];
-        static std::string lastStatus = ""; // To prevent spamming alerts
+        static std::string lastStatus = "";
         
         strncpy(buffer, status.c_str(), 255);
         win->statusBox->label(buffer);
         
+        // Parse time from status like "PLAYING [30s / 180s]"
+        size_t bracketStart = status.find('[');
+        size_t slashPos = status.find('/');
+        size_t bracketEnd = status.find(']');
+        
+        if (bracketStart != std::string::npos && slashPos != std::string::npos && bracketEnd != std::string::npos) {
+            try {
+                std::string currentStr = status.substr(bracketStart + 1, slashPos - bracketStart - 2);
+                std::string totalStr = status.substr(slashPos + 2, bracketEnd - slashPos - 3);
+                float current = std::stof(currentStr);
+                float total = std::stof(totalStr);
+                
+                win->totalDuration = total;
+                if (total > 0) {
+                    win->progressSlider->value(current / total);
+                    win->progressSlider->redraw();
+                }
+            } catch (...) {}
+        }
+        
         if (status.rfind("ERROR:", 0) == 0) {
             win->statusBox->labelcolor(FL_RED);
-            // If this is a NEW error we haven't alerted for yet
             if (status != lastStatus) {
                  fl_alert("%s", status.c_str());
             }

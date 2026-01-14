@@ -1,0 +1,12 @@
+{
+    "tracks": {
+        "TRACK_A": {
+            "path": "/home/maintainer/Dev/Piramid/device/audio/track_a.pira",
+            "required_permission": "TRACK_A"
+        },
+        "TRACK_B": {
+            "path": "/home/maintainer/Dev/Piramid/device/audio/track_b.pira",
+            "required_permission": "TRACK_B"
+        }
+    }
+}

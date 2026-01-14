@@ -22,6 +22,11 @@ public:
     // Playback control
     bool play(const std::string& filepath);
     bool stop();
+    bool pause();
+    bool resume();
+    bool seek(float seconds);
+    bool setVolume(float volume); // 0.0 - 1.0
+    int getVolume(); // returns 0-100
     std::string getStatus();
     
     // Visuals control

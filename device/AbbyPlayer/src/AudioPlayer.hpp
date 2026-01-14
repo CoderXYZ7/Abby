@@ -19,6 +19,12 @@ public:
 
     void play(const std::string& filepath);
     void stop();
+    void pause();
+    void resume();
+    void seek(float seconds);
+    void setVolume(float volume); // 0.0 - 1.0
+    float getVolume() const;
+    
     std::string getStatus();
     std::string getLastError() const { return m_lastError; }
 
@@ -26,17 +32,22 @@ public:
         float currentTime = 0.0f;
         float totalTime = 0.0f;
         bool isPlaying = false;
+        bool isPaused = false;
+        float volume = 1.0f;
     };
     
     PlaybackState getPlaybackState();
-    bool isPlaying() const { return m_isPlaying; }
+    bool isPlaying() const { return m_isPlaying && !m_isPaused; }
+    bool isPaused() const { return m_isPaused; }
 
 private:
     void playbackLoop(std::string path);
     void decryptionLoop(std::string path);
 
     std::atomic<bool> m_isPlaying;
+    std::atomic<bool> m_isPaused;
     std::atomic<bool> m_stopSignal;
+    std::atomic<float> m_volume;
     std::thread m_playbackWorker;
     std::thread m_decryptionWorker;
     

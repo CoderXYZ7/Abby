@@ -84,8 +84,10 @@ void runSocketServer(AudioPlayer& player) {
         if (activity > 0 && FD_ISSET(server_fd, &readfds)) {
             int client_fd;
             if ((client_fd = accept(server_fd, NULL, NULL)) < 0) {
+                std::cerr << "[Daemon] Accept failed" << std::endl;
                 continue;
             }
+            std::cerr << "[Daemon] Accepted connection" << std::endl;
             
             char buffer[1024] = {0};
             int valread = read(client_fd, buffer, 1024);
@@ -93,6 +95,7 @@ void runSocketServer(AudioPlayer& player) {
                 std::string msg(buffer);
                 while(!msg.empty() && (msg.back() == '\n' || msg.back() == '\r')) msg.pop_back();
 
+                std::cerr << "[Daemon] Received: " << msg << std::endl;
                 std::cout << "[Daemon] Received: " << msg << std::endl;
                 std::string response = "OK\n";
 
@@ -102,6 +105,22 @@ void runSocketServer(AudioPlayer& player) {
                     } else response = "ERROR: Missing file path\n";
                 } else if (msg == "stop") {
                     player.stop();
+                } else if (msg == "pause") {
+                    player.pause();
+                    response = "OK\n";
+                } else if (msg == "resume") {
+                    player.resume();
+                    response = "OK\n";
+                } else if (msg.rfind("seek ", 0) == 0) {
+                    float seconds = std::stof(msg.substr(5));
+                    player.seek(seconds);
+                    response = "OK\n";
+                } else if (msg.rfind("volume ", 0) == 0) {
+                    float vol = std::stof(msg.substr(7));
+                    player.setVolume(vol);
+                    response = "OK\n";
+                } else if (msg == "volume") {
+                    response = std::to_string((int)(player.getVolume() * 100)) + "%\n";
                 } else if (msg == "status") {
                     response = player.getStatus() + "\n";
                 } else if (msg.rfind("shader", 0) == 0) {
@@ -179,10 +198,15 @@ void runHeadlessMode(AudioPlayer& player) {
 
 void showUsage() {
     std::cout << "Usage:\n";
-    std::cout << "  AbbyPlayer --daemon             Start daemon (audio only)\n";
+    std::cout << "  AbbyPlayer --daemon             Start daemon\n";
     std::cout << "  AbbyPlayer play <file>          Play a file\n";
     std::cout << "  AbbyPlayer stop                 Stop playback\n";
+    std::cout << "  AbbyPlayer pause                Pause playback\n";
+    std::cout << "  AbbyPlayer resume               Resume playback\n";
+    std::cout << "  AbbyPlayer seek <seconds>       Seek to position\n";
+    std::cout << "  AbbyPlayer volume [0.0-1.0]     Set or get volume\n";
     std::cout << "  AbbyPlayer status               Get status\n";
+    std::cout << "  AbbyPlayer visuals <cmd>        start|stop|status\n";
     std::cout << "  AbbyPlayer quit                 Stop the daemon\n";
 }
 
@@ -211,6 +235,26 @@ int main(int argc, char* argv[]) {
     }
     else if (arg1 == "stop") {
         runClientMode("stop");
+    }
+    else if (arg1 == "pause") {
+        runClientMode("pause");
+    }
+    else if (arg1 == "resume") {
+        runClientMode("resume");
+    }
+    else if (arg1 == "seek") {
+        if (argc < 3) {
+            std::cout << "Error: seek requires seconds.\n";
+            return 1;
+        }
+        runClientMode("seek " + std::string(argv[2]));
+    }
+    else if (arg1 == "volume") {
+        if (argc >= 3) {
+            runClientMode("volume " + std::string(argv[2]));
+        } else {
+            runClientMode("volume");
+        }
     }
     else if (arg1 == "status") {
         runClientMode("status");
