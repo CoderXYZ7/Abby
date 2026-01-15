@@ -31,6 +31,8 @@ void runClientMode(const std::string& cmd) {
 
 // --- DAEMON MODE logic ---
 void signalHandler(int signum) {
+    const char* msg = "\n[Daemon] Signal received!\n";
+    write(STDERR_FILENO, msg, strlen(msg));
     g_running = false;
 }
 
@@ -87,21 +89,33 @@ void runSocketServer(AudioPlayer& player) {
                 std::cerr << "[Daemon] Accept failed" << std::endl;
                 continue;
             }
-            std::cerr << "[Daemon] Accepted connection" << std::endl;
+            fprintf(stderr, "[Daemon] Accepted connection (FD=%d)\n", client_fd);
+            fflush(stderr);
             
             char buffer[1024] = {0};
             int valread = read(client_fd, buffer, 1024);
+            
             if (valread > 0) {
                 std::string msg(buffer);
                 while(!msg.empty() && (msg.back() == '\n' || msg.back() == '\r')) msg.pop_back();
 
-                std::cerr << "[Daemon] Received: " << msg << std::endl;
-                std::cout << "[Daemon] Received: " << msg << std::endl;
+                fprintf(stderr, "[Daemon] RAW MSG: '%s'\n", msg.c_str()); fflush(stderr);
+                
                 std::string response = "OK\n";
 
                 if (msg.rfind("play", 0) == 0) {
+                    std::cerr << "[Daemon] Play command, msg.length()=" << msg.length() << std::endl;
                     if (msg.length() > 5) {
-                        player.play(msg.substr(5));
+                        std::string filepath = msg.substr(5);
+                        std::cerr << "[Daemon] Playing: " << filepath << std::endl;
+                        // Send response BEFORE blocking play call
+                        response = "OK: Starting playback\n";
+                        int sent = send(client_fd, response.c_str(), response.length(), 0);
+                        std::cerr << "[Daemon] Sent " << sent << " bytes response" << std::endl;
+                        close(client_fd);
+                        // Now play (blocks during decryption)
+                        player.play(filepath);
+                        continue; // Skip the send/close at end since we already did it
                     } else response = "ERROR: Missing file path\n";
                 } else if (msg == "stop") {
                     player.stop();

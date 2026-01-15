@@ -46,7 +46,7 @@ void AudioPlayer::play(const std::string& filepath) {
     stop();
     m_lastError = "";
 
-    std::cout << "[AudioPlayer] Opening encrypted file: " << filepath << std::endl;
+    std::cerr << "[AudioPlayer] Opening encrypted file: " << filepath << std::endl;
     
     m_currentFilePath = filepath;
     std::string serial = Abby::AbbyCrypt::getHardwareSerial();
@@ -60,14 +60,14 @@ void AudioPlayer::play(const std::string& filepath) {
     m_totalChunks = Abby::AbbyCrypt::getTotalChunks();
     m_currentChunkIndex = 0;
     
-    std::cout << "[AudioPlayer] Total chunks: " << m_totalChunks << std::endl;
+    std::cerr << "[AudioPlayer] Total chunks: " << m_totalChunks << std::endl;
     
     // Load ALL chunks (temporary - full streaming needs custom data source)
     {
         std::lock_guard<std::mutex> lock(m_bufferMutex);
         m_rollingBuffer.clear();
         
-        std::cout << "[AudioPlayer] Decrypting all chunks..." << std::endl;
+        std::cerr << "[AudioPlayer] Decrypting all chunks..." << std::endl;
         try {
             for (size_t i = 0; i < m_totalChunks; ++i) {
                 std::vector<unsigned char> chunk = Abby::AbbyCrypt::decryptNextChunk();
@@ -105,7 +105,7 @@ void AudioPlayer::play(const std::string& filepath) {
         return;
     }
     
-    std::cout << "[AudioPlayer] Initial buffer: " << g_ctx.audioData.size() 
+    std::cerr << "[AudioPlayer] Initial buffer: " << g_ctx.audioData.size() 
               << " bytes (" << m_rollingBuffer.size() << " chunks)" << std::endl;
 
     // Initialize decoder
@@ -113,7 +113,7 @@ void AudioPlayer::play(const std::string& filepath) {
     ma_result result = ma_decoder_init_memory(g_ctx.audioData.data(), g_ctx.audioData.size(), 
                                                &decoderConfig, &g_ctx.decoder);
     if (result != MA_SUCCESS) {
-        std::cerr << "[AudioPlayer] Failed to initialize decoder" << std::endl;
+        std::cerr << "[AudioPlayer] Failed to initialize decoder: " << result << std::endl;
         FileHandler::closeEncryptedFile();
         return;
     }

@@ -3,6 +3,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 #include <cstring>
+#include <iostream>
 
 namespace Abby {
 
@@ -50,33 +51,25 @@ bool AbbyClient::ensureConnected() {
 }
 
 std::string AbbyClient::sendCommand(const std::string& cmd) {
-    // Each command uses a fresh connection (stateless protocol)
-    int sock = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (sock < 0) return "ERROR: Socket creation failed";
+    // Use system(nc) as robust workaround for socket issues
+    std::string cmdStr = "printf \"" + cmd + "\\n\" | nc -w5 -U " + std::string(ABBY_SOCKET_PATH);
     
-    struct sockaddr_un addr;
-    addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, ABBY_SOCKET_PATH, sizeof(addr.sun_path) - 1);
+    FILE* pipe = popen(cmdStr.c_str(), "r");
+    if (!pipe) return "ERROR: popen failed";
     
-    if (::connect(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        close(sock);
-        return "ERROR: Not connected";
+    char buffer[128] = {0};
+    std::string result = "";
+    while (fgets(buffer, 128, pipe) != NULL) {
+        result += buffer;
     }
+    pclose(pipe);
     
-    send(sock, cmd.c_str(), cmd.length(), 0);
+    // Default OK if empty (fire and forget success)
+    if (result.empty()) return "OK (No response)"; 
     
-    char buffer[1024] = {0};
-    int valread = read(sock, buffer, 1023);
-    close(sock);
-    
-    if (valread > 0) {
-        std::string result(buffer);
-        // Trim trailing newlines
-        while (!result.empty() && (result.back() == '\n' || result.back() == '\r'))
-            result.pop_back();
-        return result;
-    }
-    return "ERROR: No response";
+    // Trim
+    while (!result.empty() && (result.back() == '\n' || result.back() == '\r')) result.pop_back();
+    return result;
 }
 
 // Playback control

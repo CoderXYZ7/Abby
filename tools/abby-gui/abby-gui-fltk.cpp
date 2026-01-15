@@ -9,12 +9,19 @@
 #include <FL/fl_draw.H>
 #include <FL/fl_ask.H>
 
+#include <FL/Fl_Tabs.H>
+#include <FL/Fl_Group.H>
+#include <FL/Fl_Text_Display.H>
+#include <FL/Fl_Text_Buffer.H>
+
 #include <iostream>
 #include <string>
 #include <vector>
 #include <filesystem>
 #include <cstring>
 #include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
 
 #include "AbbyCrypt.hpp"
 #include "AbbyClient.hpp"
@@ -52,6 +59,13 @@ class AbbyWindow : public Fl_Window {
     float totalDuration = 0.0f;
     bool userSeeking = false;
     
+    // Connector Tab Components
+    Fl_Input* elizUserInput;
+    Fl_Input* elizTrackInput;
+    Fl_Text_Buffer* tokenBuffer;
+    Fl_Text_Display* tokenDisplay;
+    Fl_Box* connectorStatusBox;
+    
 public:
     AbbyWindow(int w, int h, const char* title) : Fl_Window(w, h, title) {
         this->color(fl_rgb_color(40, 40, 40));
@@ -62,8 +76,14 @@ public:
         header->labelcolor(FL_WHITE);
         header->labelfont(FL_BOLD);
         
-        // Controls Group
-        int y = 60;
+        // --- TABS ---
+        Fl_Tabs* tabs = new Fl_Tabs(10, 60, w-20, h-70);
+        
+        // --- TAB 1: DIRECT CONTROL ---
+        Fl_Group* grpDirect = new Fl_Group(10, 85, w-20, h-95, "Direct Device Control");
+        grpDirect->color(fl_rgb_color(40, 40, 40));
+        
+        int y = 100;
         
         Fl_Button* btnSelect = new Fl_Button(20, y, 120, 40, "SELECT");
         btnSelect->color(fl_rgb_color(60, 160, 60));
@@ -165,6 +185,75 @@ public:
         encryptionStatus->textcolor(FL_WHITE);
         encryptionStatus->clear_visible_focus();
         
+        grpDirect->end();
+        
+        // --- TAB 2: CONNECTOR MOCK ---
+        Fl_Group* grpConnector = new Fl_Group(10, 85, w-20, h-95, "Connector Mock Test");
+        grpConnector->color(fl_rgb_color(40, 40, 40));
+        
+        int cy = 100;
+        
+        // User Input
+        Fl_Box* lblUser = new Fl_Box(20, cy, 60, 30, "User ID:");
+        lblUser->labelcolor(FL_WHITE);
+        lblUser->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+        
+        elizUserInput = new Fl_Input(90, cy, 150, 30);
+        elizUserInput->value("gui_test");
+        
+        Fl_Button* btnLogin = new Fl_Button(250, cy, 120, 30, "LOGIN (Eliz)");
+        btnLogin->color(fl_rgb_color(60, 100, 160));
+        btnLogin->labelcolor(FL_WHITE);
+        btnLogin->callback(cb_eliz_login, this);
+        
+        cy += 40;
+        
+        // Track Input
+        Fl_Box* lblTrack = new Fl_Box(20, cy, 60, 30, "Track ID:");
+        lblTrack->labelcolor(FL_WHITE);
+        lblTrack->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+        
+        elizTrackInput = new Fl_Input(90, cy, 150, 30);
+        elizTrackInput->value("TRACK_001");
+        
+        cy += 40;
+        
+        // Token Display
+        Fl_Box* lblToken = new Fl_Box(20, cy, w-40, 20, "JWT Token:");
+        lblToken->labelcolor(FL_WHITE);
+        lblToken->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+        
+        cy += 20;
+        
+        tokenBuffer = new Fl_Text_Buffer();
+        tokenDisplay = new Fl_Text_Display(20, cy, w-40, 60);
+        tokenDisplay->buffer(tokenBuffer);
+        tokenDisplay->wrap_mode(Fl_Text_Display::WRAP_AT_BOUNDS, 0);
+        
+        cy += 70;
+        
+        // Connector Controls
+        Fl_Button* btnAuth = new Fl_Button(20, cy, 120, 40, "AUTH (TCP)");
+        btnAuth->color(fl_rgb_color(160, 100, 60));
+        btnAuth->labelcolor(FL_WHITE);
+        btnAuth->callback(cb_connector_auth, this);
+        
+        Fl_Button* btnPlay = new Fl_Button(150, cy, 120, 40, "PLAY (TCP)");
+        btnPlay->color(fl_rgb_color(60, 160, 60));
+        btnPlay->labelcolor(FL_WHITE);
+        btnPlay->callback(cb_connector_play, this);
+        
+        cy += 50;
+        
+        connectorStatusBox = new Fl_Box(20, cy, w-40, 40, "Ready to connect");
+        connectorStatusBox->box(FL_FLAT_BOX);
+        connectorStatusBox->color(fl_rgb_color(30, 30, 30));
+        connectorStatusBox->labelcolor(FL_WHITE);
+        connectorStatusBox->align(FL_ALIGN_CENTER | FL_ALIGN_INSIDE);
+        
+        grpConnector->end();
+        
+        tabs->end();
         end();
         
         // Start status timer
@@ -258,6 +347,112 @@ public:
         }
     }
     
+    // --- CONNECTOR CALLBACKS ---
+    
+    static void cb_eliz_login(Fl_Widget* w, void* data) {
+        AbbyWindow* win = (AbbyWindow*)data;
+        const char* user = win->elizUserInput->value();
+        const char* track = win->elizTrackInput->value();
+        
+        std::string cmd = "curl -s -X POST https://polserverdev.ooguy.com/index.php "
+                          "-H \"Content-Type: application/json\" "
+                          "-d '{\"user_id\": \"" + std::string(user) + "\", \"permissions\": [\"" + std::string(track) + "\"], \"duration_days\": 1}'";
+                          
+        win->connectorStatusBox->label("Requesting Token..."); 
+        win->connectorStatusBox->redraw();
+        Fl::check();
+
+        FILE* pipe = popen(cmd.c_str(), "r");
+        if (!pipe) {
+            win->tokenBuffer->text("Error: popen failed");
+            return;
+        }
+        
+        char buffer[1024];
+        std::string result = "";
+        while (fgets(buffer, 1024, pipe) != NULL) {
+            result += buffer;
+        }
+        pclose(pipe);
+        
+        // Simple JSON parse for "token": "..."
+        size_t pos = result.find("\"token\"");
+        if (pos != std::string::npos) {
+             size_t start = result.find("\"", pos + 8);
+             size_t end = result.find("\"", start + 1);
+             if (start != std::string::npos && end != std::string::npos) {
+                 std::string token = result.substr(start + 1, end - start - 1);
+                 win->tokenBuffer->text(token.c_str());
+                 win->connectorStatusBox->label("Token Received!");
+                 win->connectorStatusBox->labelcolor(FL_GREEN);
+                 return;
+             }
+        }
+        
+        win->tokenBuffer->text(result.c_str()); // Show full error/response if parse fails
+        win->connectorStatusBox->label("Login Failed");
+        win->connectorStatusBox->labelcolor(FL_RED);
+    }
+    
+    void sendToConnector(const std::string& msg) {
+        int sock = 0;
+        struct sockaddr_in serv_addr;
+        char buffer[1024] = {0};
+
+        if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+            connectorStatusBox->label("Socket creation error");
+            return;
+        }
+
+        serv_addr.sin_family = AF_INET;
+        serv_addr.sin_port = htons(5000);
+
+        if(inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr) <= 0) {
+            connectorStatusBox->label("Invalid Address");
+            close(sock);
+            return;
+        }
+
+        if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
+            connectorStatusBox->label("Connection Failed (Is Connector running?)");
+            close(sock);
+            return;
+        }
+
+        std::string msgWithNewline = msg + "\n";
+        send(sock, msgWithNewline.c_str(), msgWithNewline.length(), 0);
+        
+        int valread = read(sock, buffer, 1024);
+        close(sock);
+        
+        if (valread > 0) {
+            buffer[valread] = 0;
+            // Hacky way to update label since we are in member function 
+            // but usually called from static callback with 'this'
+            // We'll update the label text but string must persist? 
+            // Actually FLTK copies label if we use label(copy=0 which is default? no, copy is not default)
+            // Fl_Widget::copy_label() is safer.
+            connectorStatusBox->copy_label(buffer);
+            connectorStatusBox->labelcolor(FL_WHITE);
+        }
+    }
+    
+    static void cb_connector_auth(Fl_Widget* w, void* data) {
+        AbbyWindow* win = (AbbyWindow*)data;
+        char* token = win->tokenBuffer->text();
+        if (!token || strlen(token) == 0) {
+            win->connectorStatusBox->label("Error: No Token");
+            return;
+        }
+        win->sendToConnector("AUTH " + std::string(token));
+    }
+    
+    static void cb_connector_play(Fl_Widget* w, void* data) {
+        AbbyWindow* win = (AbbyWindow*)data;
+        const char* track = win->elizTrackInput->value();
+        win->sendToConnector("PLAY " + std::string(track));
+    }
+    
     static void cb_timer(void* data) {
         AbbyWindow* win = (AbbyWindow*)data;
         std::string status = sendCommand("status");
@@ -305,13 +500,31 @@ public:
 };
 
 int main(int argc, char **argv) {
-    // Ensure daemon
+    // 1. Ensure AbbuPlayer Daemon is running
     std::string test = sendCommand("status");
     if (test == "ERROR") {
-        std::cout << "Starting daemon..." << std::endl;
+        std::cout << "Starting AbbyPlayer daemon..." << std::endl;
+        // Use full relative path assuming run from project root, or absolute
+        fs::path cwd = fs::current_path();
+        std::cout << "CWD: " << cwd.string() << std::endl;
+        
         system("device/AbbyPlayer/build/AbbyPlayer --daemon > /dev/null 2>&1 &");
         sleep(2);
     }
+    
+    // 2. Ensure AbbyConnector is running (check port 5000)
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in serv_addr;
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_port = htons(5000);
+    inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr);
+    
+    if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
+         std::cout << "Starting AbbyConnector..." << std::endl;
+         system("device/AbbyConnector/build/AbbyConnector > /dev/null 2>&1 &");
+         sleep(2);
+    }
+    close(sock);
 
     AbbyWindow *window = new AbbyWindow(500, 450, "Abby Control");
     window->show(argc, argv);

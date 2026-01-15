@@ -27,6 +27,7 @@ struct Session {
 Session g_session;
 
 std::string handleCommand(const std::string& cmdLine) {
+    std::cerr << "[AbbyConnector] handleCommand: " << cmdLine << std::endl;
     if (cmdLine.empty()) return "";
     
     std::string cmd, args;
@@ -41,6 +42,8 @@ std::string handleCommand(const std::string& cmdLine) {
     // remove newline
     while (!args.empty() && (args.back() == '\n' || args.back() == '\r')) args.pop_back();
     while (!cmd.empty() && (cmd.back() == '\n' || cmd.back() == '\r')) cmd.pop_back();
+    
+    std::cerr << "[AbbyConnector] cmd='" << cmd << "' args='" << args << "'" << std::endl;
 
     if (cmd == "AUTH") {
         auto result = g_validator.validate(args);
@@ -159,12 +162,11 @@ int main() {
             continue;
         }
         
-        char buffer[1024] = {0};
-        ssize_t valread;
-        while ((valread = read(new_socket, buffer, 1024)) > 0) {
+        char buffer[4096] = {0};
+        ssize_t valread = read(new_socket, buffer, sizeof(buffer) - 1);
+        if (valread > 0) {
             std::string response = handleCommand(std::string(buffer, valread));
             send(new_socket, response.c_str(), response.length(), 0);
-            memset(buffer, 0, 1024);
         }
         close(new_socket);
     }
