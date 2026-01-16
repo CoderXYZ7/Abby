@@ -74,6 +74,11 @@ class AbbyWindow : public Fl_Window {
     Fl_Button* btnBleScan;
     Fl_Button* btnBleConnect;
     
+    // Track List Components (after login)
+    Fl_Hold_Browser* trackList;
+    Fl_Button* btnPlayTrack;
+    std::string authToken; // Stored JWT after login
+    
     // Logging Components
     Fl_Text_Buffer* logBuffer;
     Fl_Text_Display* logDisplay;
@@ -315,11 +320,34 @@ public:
         
         cy = ly + 50; 
         
-        connectorStatusBox = new Fl_Box(20, cy, w-40, 30, "Bluetooth: Disconnected");
+        connectorStatusBox = new Fl_Box(20, cy, w-40, 25, "Status: Not Logged In");
         connectorStatusBox->box(FL_FLAT_BOX);
         connectorStatusBox->color(fl_rgb_color(30, 30, 30));
         connectorStatusBox->labelcolor(FL_RED);
         connectorStatusBox->align(FL_ALIGN_CENTER | FL_ALIGN_INSIDE);
+        
+        cy += 35;
+        
+        // Track List Section (populated after login)
+        Fl_Box* lblTracks = new Fl_Box(20, cy, 100, 20, "My Tracks:");
+        lblTracks->labelcolor(FL_WHITE);
+        lblTracks->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+        
+        cy += 25;
+        
+        trackList = new Fl_Hold_Browser(20, cy, w-40, 100);
+        trackList->color(fl_rgb_color(20, 20, 20));
+        trackList->textcolor(FL_WHITE);
+        trackList->textsize(12);
+        trackList->add("(Login to see your tracks)");
+        
+        cy += 110;
+        
+        btnPlayTrack = new Fl_Button(20, cy, 120, 30, "PLAY TRACK");
+        btnPlayTrack->color(fl_rgb_color(60, 140, 60));
+        btnPlayTrack->labelcolor(FL_WHITE);
+        btnPlayTrack->callback(cb_play_track, this);
+        btnPlayTrack->deactivate(); // Active only after login + track selection
         
         grpConnector->end();
         
@@ -472,63 +500,207 @@ public:
     // --- CONNECTOR CALLBACKS ---
     
     static void cb_eliz_login(Fl_Widget* w, void* data) {
-    AbbyWindow* win = (AbbyWindow*)data;
-    const char* user = win->elizUserInput->value();
-    const char* pass = win->elizPasswordInput->value();
-    
-    if (!user || strlen(user) == 0 || !pass || strlen(pass) == 0) {
-        win->log("[LOGIN] Error: Username and password are required");
-        return;
+        AbbyWindow* win = (AbbyWindow*)data;
+        const char* user = win->elizUserInput->value();
+        const char* pass = win->elizPasswordInput->value();
+        
+        if (!user || strlen(user) == 0 || !pass || strlen(pass) == 0) {
+            win->log("[LOGIN] Error: Username and password are required");
+            return;
+        }
+        
+        win->log("[LOGIN] Authenticating user: %s", user);
+        
+        // Build login request
+        std::string cmd = "curl -s -X POST https://polserverdev.ooguy.com/index.php "
+                          "-H \"Content-Type: application/json\" "
+                          "-d '{\"username\": \"" + std::string(user) + "\", "
+                          "\"password\": \"" + std::string(pass) + "\"}'";
+                          
+        win->log("[LOGIN] POST /index.php ...");
+        
+        FILE* pipe = popen(cmd.c_str(), "r");
+        if (!pipe) {
+            win->log("[LOGIN] Error: curl failed");
+            return;
+        }
+        
+        char buffer[4096];
+        std::string result = "";
+        while (fgets(buffer, sizeof(buffer), pipe) != NULL) {
+            result += buffer;
+        }
+        pclose(pipe);
+        
+        // Check for token in response
+        size_t pos = result.find("\"token\"");
+        if (pos != std::string::npos) {
+             size_t start = result.find("\"", pos + 8);
+             size_t end = result.find("\"", start + 1);
+             if (start != std::string::npos && end != std::string::npos) {
+                 std::string token = result.substr(start + 1, end - start - 1);
+                 win->authToken = token; // Store for later API calls
+                 win->tokenBuffer->text(token.c_str());
+                 win->log("[LOGIN] Success! Token received (Length: %lu)", token.length());
+                 win->connectorStatusBox->label("Logged In");
+                 win->connectorStatusBox->labelcolor(FL_GREEN);
+                 
+                 // Fetch user's tracks
+                 win->fetchTracks();
+                 return;
+             }
+        }
+        
+        // Check for error message
+        size_t errPos = result.find("\"error\"");
+        if (errPos != std::string::npos) {
+            win->log("[LOGIN] Failed: %s", result.c_str());
+        } else {
+            win->log("[LOGIN] Failed. Response: %s", result.c_str());
+        }
+        win->connectorStatusBox->label("Auth Failed");
+        win->connectorStatusBox->labelcolor(FL_RED);
     }
     
-    win->log("[LOGIN] Authenticating user: %s", user);
-    
-    // Build login request
-    std::string cmd = "curl -s -X POST https://polserverdev.ooguy.com/index.php "
-                      "-H \"Content-Type: application/json\" "
-                      "-d '{\"username\": \"" + std::string(user) + "\", "
-                      "\"password\": \"" + std::string(pass) + "\"}'";
-                      
-    win->log("[LOGIN] POST /index.php ...");
-    
-    FILE* pipe = popen(cmd.c_str(), "r");
-    if (!pipe) {
-        win->log("[LOGIN] Error: curl failed");
-        return;
+    void fetchTracks() {
+        if (authToken.empty()) {
+            log("[TRACKS] Error: Not authenticated");
+            return;
+        }
+        
+        log("[TRACKS] Fetching user's tracks...");
+        
+        std::string cmd = "curl -s -X GET https://polserverdev.ooguy.com/api/tracks "
+                          "-H \"Authorization: Bearer " + authToken + "\"";
+        
+        FILE* pipe = popen(cmd.c_str(), "r");
+        if (!pipe) {
+            log("[TRACKS] Error: curl failed");
+            return;
+        }
+        
+        char buffer[4096];
+        std::string result = "";
+        while (fgets(buffer, sizeof(buffer), pipe) != NULL) {
+            result += buffer;
+        }
+        pclose(pipe);
+        
+        // Clear track list
+        trackList->clear();
+        
+        // Simple JSON parsing for tracks array
+        // Looking for: "tracks": [{"id": "...", "name": "..."}]
+        size_t tracksPos = result.find("\"tracks\"");
+        if (tracksPos == std::string::npos) {
+            log("[TRACKS] No tracks found or error: %s", result.c_str());
+            trackList->add("(No tracks available)");
+            return;
+        }
+        
+        // Parse track names - simple approach
+        size_t pos = 0;
+        int count = 0;
+        while ((pos = result.find("\"name\"", pos)) != std::string::npos) {
+            size_t start = result.find("\"", pos + 7);
+            size_t end = result.find("\"", start + 1);
+            if (start != std::string::npos && end != std::string::npos) {
+                std::string name = result.substr(start + 1, end - start - 1);
+                
+                // Also get ID for this track
+                size_t idPos = result.rfind("\"id\"", pos);
+                std::string trackId = "";
+                if (idPos != std::string::npos && idPos > pos - 100) {
+                    size_t idStart = result.find("\"", idPos + 5);
+                    size_t idEnd = result.find("\"", idStart + 1);
+                    if (idStart != std::string::npos && idEnd != std::string::npos) {
+                        trackId = result.substr(idStart + 1, idEnd - idStart - 1);
+                    }
+                }
+                
+                // Format: "TrackName [ID]"
+                std::string label = name + " [" + trackId + "]";
+                trackList->add(label.c_str());
+                count++;
+            }
+            pos = end + 1;
+        }
+        
+        if (count > 0) {
+            log("[TRACKS] Loaded %d tracks", count);
+            btnPlayTrack->activate();
+        } else {
+            trackList->add("(No tracks available)");
+        }
     }
     
-    char buffer[2048];
-    std::string result = "";
-    while (fgets(buffer, sizeof(buffer), pipe) != NULL) {
-        result += buffer;
+    static void cb_play_track(Fl_Widget* w, void* data) {
+        AbbyWindow* win = (AbbyWindow*)data;
+        int sel = win->trackList->value();
+        if (sel == 0) {
+            win->log("[PLAY] No track selected");
+            return;
+        }
+        
+        const char* label = win->trackList->text(sel);
+        win->log("[PLAY] Selected: %s", label);
+        
+        // Extract track ID from label "TrackName [TRACK_ID]"
+        std::string s(label);
+        size_t start = s.rfind('[');
+        size_t end = s.rfind(']');
+        if (start == std::string::npos || end == std::string::npos) {
+            win->log("[PLAY] Error: Could not parse track ID");
+            return;
+        }
+        std::string trackId = s.substr(start + 1, end - start - 1);
+        
+        win->log("[PLAY] Getting key for track: %s", trackId.c_str());
+        
+        // Get track key
+        std::string cmd = "curl -s -X GET \"https://polserverdev.ooguy.com/api/tracks/" + trackId + "/key\" "
+                          "-H \"Authorization: Bearer " + win->authToken + "\"";
+        
+        FILE* pipe = popen(cmd.c_str(), "r");
+        if (!pipe) {
+            win->log("[PLAY] Error: curl failed");
+            return;
+        }
+        
+        char buffer[4096];
+        std::string result = "";
+        while (fgets(buffer, sizeof(buffer), pipe) != NULL) {
+            result += buffer;
+        }
+        pclose(pipe);
+        
+        // Check for key in response
+        size_t keyPos = result.find("\"key\"");
+        if (keyPos == std::string::npos) {
+            win->log("[PLAY] Error: No key in response: %s", result.c_str());
+            return;
+        }
+        
+        size_t ks = result.find("\"", keyPos + 6);
+        size_t ke = result.find("\"", ks + 1);
+        if (ks == std::string::npos || ke == std::string::npos) {
+            win->log("[PLAY] Error: Could not parse key");
+            return;
+        }
+        std::string key = result.substr(ks + 1, ke - ks - 1);
+        
+        win->log("[BLE] Sending key via mock Bluetooth...");
+        win->log("[BLE] Key: %s...", key.substr(0, 20).c_str());
+        
+        // Mock: Send play command to daemon with track file path
+        // In real BLE, this would be sent over GATT characteristic
+        // For now, we'll use the daemon directly
+        std::string playCmd = "play device/audio/" + trackId + ".pira";
+        sendCommand(playCmd);
+        
+        win->log("[PLAY] Track playback started via mock BLE");
     }
-    pclose(pipe);
     
-    // Check for token in response
-    size_t pos = result.find("\"token\"");
-    if (pos != std::string::npos) {
-         size_t start = result.find("\"", pos + 8);
-         size_t end = result.find("\"", start + 1);
-         if (start != std::string::npos && end != std::string::npos) {
-             std::string token = result.substr(start + 1, end - start - 1);
-             win->tokenBuffer->text(token.c_str());
-             win->log("[LOGIN] Success! Token received (Length: %lu)", token.length());
-             win->connectorStatusBox->label("Authenticated");
-             win->connectorStatusBox->labelcolor(FL_GREEN);
-             return;
-         }
-    }
-    
-    // Check for error message
-    size_t errPos = result.find("\"error\"");
-    if (errPos != std::string::npos) {
-        win->log("[LOGIN] Failed: %s", result.c_str());
-    } else {
-        win->log("[LOGIN] Failed. Response: %s", result.c_str());
-    }
-    win->connectorStatusBox->label("Auth Failed");
-    win->connectorStatusBox->labelcolor(FL_RED);
-}    
     void sendToConnector(const std::string& msg) {
         int sock = 0;
         struct sockaddr_in serv_addr;
