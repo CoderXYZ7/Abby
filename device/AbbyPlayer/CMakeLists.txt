@@ -16,6 +16,7 @@ add_executable(AbbyPlayer
     src/AudioPlayer.cpp
     src/FrequencyAnalyzer.cpp
     src/ShaderVisualizer.cpp
+    src/ResourceManager.cpp
 )
 
 find_package(PkgConfig REQUIRED)

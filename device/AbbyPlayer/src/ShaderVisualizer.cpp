@@ -1,4 +1,5 @@
 #include "ShaderVisualizer.hpp"
+#include "ResourceManager.hpp"
 #include <iostream>
 #include <vector>
 #include <cmath>
@@ -19,12 +20,16 @@ const char* ShaderVisualizer::VERTEX_SOURCE = R"(
 
 void ShaderVisualizer::loadShaders() {
     m_programs.clear();
-    std::string shaderDir = "/home/maintainer/Dev/Piramid/device/AbbyPlayer/shaders";
     
-    if (!fs::exists(shaderDir)) {
-        std::cerr << "[Visuals] Shader directory not found: " << shaderDir << std::endl;
+    // Use ResourceManager to find shaders directory
+    std::string shaderDir = Abby::ResourceManager::instance().findDirectory("shaders");
+    
+    if (shaderDir.empty() || !fs::exists(shaderDir)) {
+        std::cerr << "[Visuals] Shader directory not found!" << std::endl;
         return;
     }
+    
+    std::cout << "[Visuals] Using shader directory: " << shaderDir << std::endl;
 
     for (const auto& entry : fs::directory_iterator(shaderDir)) {
         if (entry.path().extension() == ".frag") {

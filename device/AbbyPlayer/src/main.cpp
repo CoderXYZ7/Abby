@@ -5,10 +5,12 @@
 #include <csignal>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/file.h>  // For flock
 #include <unistd.h>
 #include <thread>
 #include <memory>
 #include <atomic>
+#include <fstream>
 
 #include "AbbyCrypt.hpp"
 #include "AudioPlayer.hpp"
@@ -16,11 +18,48 @@
 #include "AbbyClient.hpp"
 
 #define SOCKET_PATH "/tmp/abby.sock"
+#define LOCKFILE_PATH "/tmp/abby.pid"
 
 bool g_running = true;
 std::shared_ptr<ShaderVisualizer> g_visuals = nullptr;
 std::thread g_visualsThread;
 std::atomic<bool> g_visualsRunning{false};
+int g_lockfileFd = -1;
+
+// Lockfile management
+bool acquireLockfile() {
+    g_lockfileFd = open(LOCKFILE_PATH, O_RDWR | O_CREAT, 0644);
+    if (g_lockfileFd < 0) {
+        std::cerr << "[Daemon] Cannot create lockfile: " << LOCKFILE_PATH << std::endl;
+        return false;
+    }
+    
+    if (flock(g_lockfileFd, LOCK_EX | LOCK_NB) < 0) {
+        std::cerr << "[Daemon] Another instance is already running!" << std::endl;
+        close(g_lockfileFd);
+        g_lockfileFd = -1;
+        return false;
+    }
+    
+    // Write our PID
+    std::string pid = std::to_string(getpid());
+    if (ftruncate(g_lockfileFd, 0) == 0) {
+        write(g_lockfileFd, pid.c_str(), pid.length());
+    }
+    
+    std::cout << "[Daemon] Acquired lockfile (PID " << getpid() << ")" << std::endl;
+    return true;
+}
+
+void releaseLockfile() {
+    if (g_lockfileFd >= 0) {
+        flock(g_lockfileFd, LOCK_UN);
+        close(g_lockfileFd);
+        unlink(LOCKFILE_PATH);
+        g_lockfileFd = -1;
+        std::cout << "[Daemon] Released lockfile" << std::endl;
+    }
+}
 
 // --- CLIENT MODE (Uses libabby-client) ---
 void runClientMode(const std::string& cmd) {
@@ -178,6 +217,11 @@ void runSocketServer(AudioPlayer& player) {
 
 void runHeadlessMode(AudioPlayer& player) {
     std::cout << "\n--- Abby Daemon Mode ---" << std::endl;
+    
+    // Acquire lockfile to prevent multiple instances
+    if (!acquireLockfile()) {
+        return;
+    }
 
     // Run socket server in BACKGROUND thread
     std::thread serverThread(runSocketServer, std::ref(player));
@@ -206,6 +250,9 @@ void runHeadlessMode(AudioPlayer& player) {
     }
 
     if (serverThread.joinable()) serverThread.join();
+    
+    // Release lockfile on shutdown
+    releaseLockfile();
     
     std::cout << "Daemon shutting down..." << std::endl;
 }

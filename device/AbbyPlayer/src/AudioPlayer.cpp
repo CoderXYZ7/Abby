@@ -1,12 +1,13 @@
+#define MINIAUDIO_IMPLEMENTATION
+#include "../include/miniaudio.h"
+
 #include "AbbyCrypt.hpp"
 #include "AudioPlayer.hpp"
 #include "FileHandler.hpp"
 #include <iostream>
 #include <sstream>
 #include <vector>
-
-#define MINIAUDIO_IMPLEMENTATION
-#include "../include/miniaudio.h"
+#include <cstring>
 
 // Global context
 struct PlayerContext {
@@ -20,6 +21,7 @@ struct PlayerContext {
 PlayerContext g_ctx; 
 
 // miniaudio data callback
+// miniaudio data callback
 void data_callback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount)
 {
     struct PlayerContext* ctx = (struct PlayerContext*)pDevice->pUserData;
@@ -30,6 +32,56 @@ void data_callback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uin
     if (ctx->analyzer) {
         ctx->analyzer->pushSamples((float*)pOutput, frameCount * ctx->decoder.outputChannels);
     }
+} 
+
+ma_result AudioPlayer::ds_read(ma_decoder* pDecoder, void* pBufferOut, size_t bytesToRead, size_t* pBytesRead) {
+    AudioPlayer* player = (AudioPlayer*)pDecoder->pUserData;
+    size_t bytesRead = 0;
+    uint8_t* outPtr = (uint8_t*)pBufferOut;
+    
+    while (bytesToRead > 0) {
+        std::unique_lock<std::mutex> lock(player->m_bufferMutex);
+        
+        // Wait for data
+        player->m_bufferCV.wait_for(lock, std::chrono::milliseconds(100), [player]() {
+            return !player->m_rollingBuffer.empty() || player->m_stopSignal || player->m_seekRequested;
+        });
+        
+        if (player->m_stopSignal || player->m_seekRequested) break;
+        
+        if (player->m_rollingBuffer.empty()) {
+            // Buffer underrun or EOF
+            break;
+        }
+        
+        // Read from front chunk
+        AudioChunk& chunk = player->m_rollingBuffer.front();
+        size_t available = chunk.data.size() - player->m_readOffsetInFrontChunk;
+        size_t toCopy = (bytesToRead < available) ? bytesToRead : available;
+        
+        if (toCopy > 0) {
+            std::memcpy(outPtr, chunk.data.data() + player->m_readOffsetInFrontChunk, toCopy);
+            
+            outPtr += toCopy;
+            bytesRead += toCopy;
+            bytesToRead -= toCopy;
+            player->m_readOffsetInFrontChunk += toCopy;
+        }
+        
+        // Remove chunk if fully consumed
+        if (player->m_readOffsetInFrontChunk >= chunk.data.size()) {
+            player->m_readOffsetInFrontChunk = 0;
+            player->m_rollingBuffer.pop_front();
+            player->m_bufferCV.notify_all(); // Notify producer that space is available
+        }
+    }
+    
+    if (pBytesRead) *pBytesRead = bytesRead;
+    return MA_SUCCESS; 
+}
+
+ma_result AudioPlayer::ds_seek(ma_decoder* pDecoder, ma_int64 byteOffset, ma_seek_origin origin) {
+    return MA_SUCCESS; // Seeking disabled for now
 } 
 
 AudioPlayer::AudioPlayer() 
@@ -59,62 +111,43 @@ void AudioPlayer::play(const std::string& filepath) {
     
     m_totalChunks = Abby::AbbyCrypt::getTotalChunks();
     m_currentChunkIndex = 0;
+    m_readOffsetInFrontChunk = 0;
     
     std::cerr << "[AudioPlayer] Total chunks: " << m_totalChunks << std::endl;
     
-    // Load ALL chunks (temporary - full streaming needs custom data source)
+    // Clear buffer
     {
         std::lock_guard<std::mutex> lock(m_bufferMutex);
         m_rollingBuffer.clear();
-        
-        std::cerr << "[AudioPlayer] Decrypting all chunks..." << std::endl;
-        try {
-            for (size_t i = 0; i < m_totalChunks; ++i) {
-                std::vector<unsigned char> chunk = Abby::AbbyCrypt::decryptNextChunk();
-                if (chunk.empty()) {
-                    std::cerr << "[AudioPlayer] Failed to decrypt chunk " << i << std::endl;
-                    m_lastError = "Decryption Failed: Data Corruption";
-                    break;
-                }
-                
-                AudioChunk ac;
-                ac.data = std::move(chunk);
-                ac.chunkIndex = i;
-                m_rollingBuffer.push_back(std::move(ac));
-            }
-        } catch (const std::exception& e) {
-            std::cerr << "[AudioPlayer] Decryption Error: " << e.what() << std::endl;
-            m_lastError = "Decryption Failed: Authentication Error (Wrong Key/Hardware ID)";
-            m_rollingBuffer.clear();
-        }
-        
-        // Concatenate all chunks
-        g_ctx.audioData.clear();
-        for (const auto& chunk : m_rollingBuffer) {
-            g_ctx.audioData.insert(g_ctx.audioData.end(), chunk.data.begin(), chunk.data.end());
-        }
-        
-        std::cout << "[AudioPlayer] Decrypted " << m_rollingBuffer.size() 
-                  << " chunks, total " << g_ctx.audioData.size() << " bytes" << std::endl;
     }
-    
-    if (g_ctx.audioData.empty()) {
-        if (m_lastError.empty()) m_lastError = "Buffer Empty (Decryption Failed?)";
-        std::cerr << "[AudioPlayer] Initial buffer is empty: " << m_lastError << std::endl;
-        FileHandler::closeEncryptedFile();
-        return;
-    }
-    
-    std::cerr << "[AudioPlayer] Initial buffer: " << g_ctx.audioData.size() 
-              << " bytes (" << m_rollingBuffer.size() << " chunks)" << std::endl;
+    g_ctx.audioData.clear(); // Unused in streaming mode
 
-    // Initialize decoder
+    m_stopSignal = false;
+    m_seekRequested = false;
+
+    // Start decryption thread to pre-buffer
+    m_decryptionWorker = std::thread(&AudioPlayer::decryptionLoop, this, filepath);
+
+    // Wait for buffer to fill slightly (prevent immediate underrun)
+    {
+        std::unique_lock<std::mutex> lock(m_bufferMutex);
+        m_bufferCV.wait(lock, [this] { return !m_rollingBuffer.empty() || m_stopSignal; });
+    }
+    
+    if (m_stopSignal || m_rollingBuffer.empty()) {
+       std::cerr << "[AudioPlayer] Failed to pre-buffer" << std::endl;
+       return;
+    }
+
+    // Initialize decoder with CUSTOM CALLBACKS
     ma_decoder_config decoderConfig = ma_decoder_config_init_default();
-    ma_result result = ma_decoder_init_memory(g_ctx.audioData.data(), g_ctx.audioData.size(), 
-                                               &decoderConfig, &g_ctx.decoder);
+    ma_result result = ma_decoder_init(ds_read, ds_seek, this, &decoderConfig, &g_ctx.decoder);
+
     if (result != MA_SUCCESS) {
         std::cerr << "[AudioPlayer] Failed to initialize decoder: " << result << std::endl;
         FileHandler::closeEncryptedFile();
+        m_stopSignal = true;
+        if(m_decryptionWorker.joinable()) m_decryptionWorker.join();
         return;
     }
     
@@ -286,15 +319,34 @@ void AudioPlayer::playbackLoop(std::string path) {
 void AudioPlayer::decryptionLoop(std::string path) {
     std::cout << "[AudioPlayer] Decryption thread started" << std::endl;
     
-    // Initial chunks already loaded, wait a bit before streaming
-    std::this_thread::sleep_for(std::chrono::seconds(1));
-    
+    // Define max buffer size (e.g., 20 chunks ~ 20MB)
+    const size_t MAX_BUFFER_CHUNKS = 20;
+
     while (!m_stopSignal) {
+        // Flow Control: Block if buffer is full
+        {
+            std::unique_lock<std::mutex> lock(m_bufferMutex);
+            m_bufferCV.wait(lock, [this, MAX_BUFFER_CHUNKS]() { 
+                return m_rollingBuffer.size() < MAX_BUFFER_CHUNKS || m_stopSignal || m_seekRequested;
+            });
+        }
+        
+        if (m_stopSignal) break;
+
         size_t currentChunk = Abby::AbbyCrypt::getCurrentChunk();
         
-        // Check if we need to decrypt more
+        // Decrypt next chunk if available
         if (currentChunk < m_totalChunks) {
-            std::vector<unsigned char> newChunk = Abby::AbbyCrypt::decryptNextChunk();
+            std::vector<unsigned char> newChunk;
+            try {
+                newChunk = Abby::AbbyCrypt::decryptNextChunk();
+            } catch (const std::exception& e) {
+                std::cerr << "[AudioPlayer] Decryption Error: " << e.what() << std::endl;
+                m_lastError = "Decryption Failed";
+                m_stopSignal = true; // Fatal error
+                m_bufferCV.notify_all(); // Wake up reader to stop
+                break;
+            }
             
             if (!newChunk.empty()) {
                 std::lock_guard<std::mutex> lock(m_bufferMutex);
@@ -305,20 +357,17 @@ void AudioPlayer::decryptionLoop(std::string path) {
                 ac.chunkIndex = currentChunk;
                 m_rollingBuffer.push_back(std::move(ac));
                 
-                // Remove old chunks (keep only last 5)
-                while (m_rollingBuffer.size() > ROLLING_BUFFER_CHUNKS) {
-                    size_t removedIdx = m_rollingBuffer.front().chunkIndex;
-                    m_rollingBuffer.pop_front();
-                    std::cout << "[AudioPlayer] Dropped chunk " << removedIdx 
-                              << " (buffer size: " << m_rollingBuffer.size() << ")" << std::endl;
-                }
+                m_bufferCV.notify_all(); // Notify reader
                 
-                std::cout << "[AudioPlayer] Buffered chunk " << currentChunk 
-                          << " (" << m_rollingBuffer.size() << " chunks in buffer)" << std::endl;
+                // Debug log occasionally
+                if (m_rollingBuffer.size() % 5 == 0) {
+                     std::cout << "[AudioPlayer] Buffered " << m_rollingBuffer.size() << " chunks. Next: " << currentChunk + 1 << std::endl;
+                }
             }
+        } else {
+            // End of File reached, just wait
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
-        
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
     
     std::cout << "[AudioPlayer] Decryption thread stopped" << std::endl;

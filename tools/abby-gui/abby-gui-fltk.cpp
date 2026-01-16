@@ -201,6 +201,18 @@ public:
         elizUserInput = new Fl_Input(90, cy, 150, 30);
         elizUserInput->value("gui_test");
         
+        cy += 40;
+        
+        // Password Input (Visual only for now)
+        Fl_Box* lblPass = new Fl_Box(20, cy, 60, 30, "Password:");
+        lblPass->labelcolor(FL_WHITE);
+        lblPass->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+        
+        Fl_Input* elizPassInput;
+        elizPassInput = new Fl_Input(90, cy, 150, 30);
+        elizPassInput->type(FL_SECRET_INPUT);
+        elizPassInput->value("password");
+        
         Fl_Button* btnLogin = new Fl_Button(250, cy, 120, 30, "LOGIN (Eliz)");
         btnLogin->color(fl_rgb_color(60, 100, 160));
         btnLogin->labelcolor(FL_WHITE);
@@ -500,15 +512,23 @@ public:
 };
 
 int main(int argc, char **argv) {
-    // 1. Ensure AbbuPlayer Daemon is running
+    // 1. Ensure AbbyPlayer Daemon is running
     std::string test = sendCommand("status");
-    if (test == "ERROR") {
-        std::cout << "Starting AbbyPlayer daemon..." << std::endl;
+    // "OK (No response)" is returned by AbbyClient when nc fails to connect (empty stdout)
+    // "ERROR" is explicit error.
+    // If status doesn't look like "STOPPED", "PLAYING", or "PAUSED", assume down.
+    bool daemonRunning = (test.find("STOPPED") != std::string::npos) || 
+                         (test.find("PLAYING") != std::string::npos) || 
+                         (test.find("PAUSED") != std::string::npos);
+
+    if (!daemonRunning) {
+        std::cout << "Daemon status check failed (" << test << "). Starting AbbyPlayer daemon..." << std::endl;
         // Use full relative path assuming run from project root, or absolute
         fs::path cwd = fs::current_path();
         std::cout << "CWD: " << cwd.string() << std::endl;
         
-        system("device/AbbyPlayer/build/AbbyPlayer --daemon > /dev/null 2>&1 &");
+        // Log to /tmp/abby_daemon.log for debugging
+        system("device/AbbyPlayer/build/AbbyPlayer --daemon > /tmp/abby_daemon.log 2>&1 &");
         sleep(2);
     }
     

@@ -4,7 +4,9 @@
 #include <thread>
 #include <memory>
 #include <vector>
+#include "../include/miniaudio.h"
 #include <mutex>
+#include <condition_variable>
 #include <deque>
 #include "FrequencyAnalyzer.hpp"
 
@@ -44,6 +46,10 @@ private:
     void playbackLoop(std::string path);
     void decryptionLoop(std::string path);
 
+    // Miniaudio callbacks
+    static ma_result ds_read(ma_decoder* pDecoder, void* pBufferOut, size_t bytesToRead, size_t* pBytesRead);
+    static ma_result ds_seek(ma_decoder* pDecoder, ma_int64 byteOffset, ma_seek_origin origin);
+
     std::atomic<bool> m_isPlaying;
     std::atomic<bool> m_isPaused;
     std::atomic<bool> m_stopSignal;
@@ -58,9 +64,16 @@ private:
     };
     
     std::deque<AudioChunk> m_rollingBuffer;
+    size_t m_readOffsetInFrontChunk; // Offset in the first chunk of the deque
+    
     std::mutex m_bufferMutex;
+    std::condition_variable m_bufferCV;
+    
     size_t m_totalChunks;
-    std::atomic<size_t> m_currentChunkIndex;
+    std::atomic<size_t> m_currentChunkIndex; // Next chunk to be decrypted
+    std::atomic<size_t> m_seekTargetChunk;   // For seeking requests
+    std::atomic<bool> m_seekRequested;
+    
     std::string m_currentFilePath;
     std::string m_lastError;
     
