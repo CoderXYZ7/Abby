@@ -6,10 +6,27 @@
 
 std::vector<unsigned char> CryptoEngine::deriveKey(const std::string& serial) {
     std::vector<unsigned char> key(32);
-    // Use PBKDF2 for key derivation
-    // In production, we'd use a unique salt, but here we can use a project-fixed salt
-    // or derive it from the serial itself.
-    const unsigned char salt[] = "PIRAMID_SALT_2024";
+    
+    // Obfuscated Salt: "PIRAMID_SALT_2024" (18 bytes incl null)
+    // XOR Key: 0x55 (arbitrary)
+    // "P" (0x50) ^ 0x55 = 0x05
+    // "I" (0x49) ^ 0x55 = 0x1C
+    // ...
+    // Generated at runtime to defeat 'strings'
+    const unsigned char xorKey = 0x55;
+    const unsigned char obfuscated[] = {
+        0x50^0x55, 0x49^0x55, 0x52^0x55, 0x41^0x55, 0x4D^0x55, 0x49^0x55, 0x44^0x55, // PIRAMID
+        0x5F^0x55, // _
+        0x53^0x55, 0x41^0x55, 0x4C^0x55, 0x54^0x55, // SALT
+        0x5F^0x55, // _
+        0x32^0x55, 0x30^0x55, 0x32^0x55, 0x34^0x55, // 2024
+        0x00^0x55  // Null terminator
+    };
+    
+    unsigned char salt[sizeof(obfuscated)];
+    for(size_t i=0; i<sizeof(obfuscated); i++) {
+        salt[i] = obfuscated[i] ^ xorKey;
+    }
     
     if (PKCS5_PBKDF2_HMAC(serial.c_str(), serial.length(), salt, sizeof(salt), 10000, EVP_sha256(), 32, key.data()) != 1) {
         std::cerr << "Error in key derivation" << std::endl;

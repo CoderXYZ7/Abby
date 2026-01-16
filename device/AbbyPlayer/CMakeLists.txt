@@ -4,6 +4,11 @@ project(AbbyPlayer VERSION 0.1.0)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
+# Strip symbols in Release mode
+if(CMAKE_BUILD_TYPE MATCHES "Release")
+    add_link_options("-s")
+endif()
+
 add_subdirectory(../AbbyCrypt ${CMAKE_CURRENT_BINARY_DIR}/AbbyCrypt)
 add_subdirectory(../../libs/abby-client ${CMAKE_CURRENT_BINARY_DIR}/abby-client)
 
