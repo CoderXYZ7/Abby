@@ -570,7 +570,7 @@ public:
         
         log("[TRACKS] Fetching user's tracks...");
         
-        std::string cmd = "curl -s -X GET https://polserverdev.ooguy.com/api/tracks "
+        std::string cmd = "curl -s -X GET https://polserverdev.ooguy.com/api/tracks.php "
                           "-H \"Authorization: Bearer " + authToken + "\"";
         
         FILE* pipe = popen(cmd.c_str(), "r");
@@ -658,7 +658,7 @@ public:
         win->log("[PLAY] Getting key for track: %s", trackId.c_str());
         
         // Get track key
-        std::string cmd = "curl -s -X GET \"https://polserverdev.ooguy.com/api/tracks/" + trackId + "/key\" "
+        std::string cmd = "curl -s -X GET \"https://polserverdev.ooguy.com/api/tracks.php/" + trackId + "/key\" "
                           "-H \"Authorization: Bearer " + win->authToken + "\"";
         
         FILE* pipe = popen(cmd.c_str(), "r");
