@@ -32,8 +32,13 @@ size_t AbbyCrypt::getTotalChunks() {
     return FileHandler::getTotalChunks();
 }
 
+
 size_t AbbyCrypt::getCurrentChunk() {
     return FileHandler::getCurrentChunk();
+}
+
+void AbbyCrypt::seekToChunk(size_t chunk) {
+    FileHandler::seekToChunk(chunk);
 }
 
 }

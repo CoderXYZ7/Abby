@@ -21,6 +21,7 @@ public:
     static void closeEncryptedFile();
     static size_t getTotalChunks();
     static size_t getCurrentChunk();
+    static void seekToChunk(size_t chunk);
 };
 
 }

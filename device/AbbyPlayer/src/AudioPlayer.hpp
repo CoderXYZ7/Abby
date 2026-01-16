@@ -72,6 +72,7 @@ private:
     size_t m_totalChunks;
     std::atomic<size_t> m_currentChunkIndex; // Next chunk to be decrypted
     std::atomic<size_t> m_seekTargetChunk;   // For seeking requests
+    std::atomic<size_t> m_seekOffsetInChunk; // Offset within the target chunk
     std::atomic<bool> m_seekRequested;
     
     std::string m_currentFilePath;

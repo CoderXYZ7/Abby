@@ -12,6 +12,7 @@ std::ifstream FileHandler::currentFile;
 std::string FileHandler::currentSerial;
 size_t FileHandler::totalChunks = 0;
 size_t FileHandler::currentChunkIndex = 0;
+uint32_t FileHandler::storedChunkSize = 0;
 std::vector<ChunkMetadata> FileHandler::chunkMetadata;
 
 // PIRA v2 Format:
@@ -123,8 +124,9 @@ bool FileHandler::openEncryptedFile(const std::string& sourcePath, const std::st
     currentFile.read(reinterpret_cast<char*>(&chunkSizeU32), sizeof(uint32_t));
     
     totalChunks = numChunksU32;
+    storedChunkSize = chunkSizeU32;
     
-    std::cout << "[FileHandler] Opened PIRA v2: " << totalChunks << " chunks" << std::endl;
+    std::cout << "[FileHandler] Opened PIRA v2: " << totalChunks << " chunks (Avg Size: " << storedChunkSize << ")" << std::endl;
     return true;
 }
 
@@ -185,6 +187,35 @@ size_t FileHandler::getTotalChunks() {
 
 size_t FileHandler::getCurrentChunk() {
     return currentChunkIndex;
+}
+
+void FileHandler::seekToChunk(size_t chunkIndex) {
+    if (!currentFile.is_open()) return;
+    
+    if (chunkIndex >= totalChunks) chunkIndex = totalChunks - 1; // Clamp
+    
+    // Header size (4 Magic + 1 Ver + 4 NumChunks + 4 ChunkSize) = 13
+    const size_t headerSize = 13;
+    const size_t metadataSize = 12 + 16; // IV + Tag
+    
+    // Encryption logic (encryptFile) writes fixed size chunks (except maybe last)
+    // offset = header + index * (metadata + chunkSize)
+    // Note: This assumes all previous chunks were FULL size.
+    // Given encryptFile logic: chunkSize = min(CHUNK, remaining). 
+    // Yes, all non-last chunks are full CHUNK_SIZE_BYTES.
+    
+    size_t fullChunkOnDisk = metadataSize + storedChunkSize;
+    size_t offset = headerSize + (chunkIndex * fullChunkOnDisk);
+    
+    currentFile.clear(); // Clear EOF flags
+    currentFile.seekg(offset, std::ios::beg);
+    
+    if (currentFile.good()) {
+        currentChunkIndex = chunkIndex;
+        // std::cout << "[FileHandler] Seeked to chunk " << chunkIndex << " @ " << offset << std::endl;
+    } else {
+        std::cerr << "[FileHandler] Seek failed!" << std::endl;
+    }
 }
 
 // Compatibility: Decrypt entire file to memory

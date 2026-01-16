@@ -21,13 +21,17 @@ struct PlayerContext {
 PlayerContext g_ctx; 
 
 // miniaudio data callback
-// miniaudio data callback
 void data_callback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount)
 {
     struct PlayerContext* ctx = (struct PlayerContext*)pDevice->pUserData;
     if (ctx == NULL) return;
 
-    ma_decoder_read_pcm_frames(&ctx->decoder, pOutput, frameCount, NULL);
+    ma_uint64 framesRead = 0;
+    ma_decoder_read_pcm_frames(&ctx->decoder, pOutput, frameCount, &framesRead);
+    
+    if (framesRead < frameCount) {
+        // std::cerr << "[Callback] Underrun? Req: " << frameCount << " Read: " << framesRead << std::endl;
+    }
     
     if (ctx->analyzer) {
         ctx->analyzer->pushSamples((float*)pOutput, frameCount * ctx->decoder.outputChannels);
@@ -39,18 +43,34 @@ ma_result AudioPlayer::ds_read(ma_decoder* pDecoder, void* pBufferOut, size_t by
     size_t bytesRead = 0;
     uint8_t* outPtr = (uint8_t*)pBufferOut;
     
+    // std::cout << "[ds_read] [" << player << "] Req: " << bytesToRead << std::endl;
+
+    // Early exit if stop requested
+    if (player->m_stopSignal) {
+        if (pBytesRead) *pBytesRead = 0;
+        return MA_AT_END;
+    }
+
     while (bytesToRead > 0) {
         std::unique_lock<std::mutex> lock(player->m_bufferMutex);
         
-        // Wait for data
-        player->m_bufferCV.wait_for(lock, std::chrono::milliseconds(100), [player]() {
+        // Wait for data (timeout for seek/init)
+        bool gotData = player->m_bufferCV.wait_for(lock, std::chrono::milliseconds(500), [player]() {
             return !player->m_rollingBuffer.empty() || player->m_stopSignal || player->m_seekRequested;
         });
         
-        if (player->m_stopSignal || player->m_seekRequested) break;
+        // Exit on stop
+        if (player->m_stopSignal) {
+            if (pBytesRead) *pBytesRead = bytesRead;
+            return bytesRead > 0 ? MA_SUCCESS : MA_AT_END;
+        }
         
+        // Exit on seek (caller should retry after seek completes)
+        if (player->m_seekRequested) break;
+        
+        // If buffer empty after timeout, this is an underrun or EOF
         if (player->m_rollingBuffer.empty()) {
-            // Buffer underrun or EOF
+            // std::cerr << "[ds_read] Buffer Empty! Underrun." << std::endl;
             break;
         }
         
@@ -70,18 +90,110 @@ ma_result AudioPlayer::ds_read(ma_decoder* pDecoder, void* pBufferOut, size_t by
         
         // Remove chunk if fully consumed
         if (player->m_readOffsetInFrontChunk >= chunk.data.size()) {
+            // std::cout << "[ds_read] Consumed chunk " << chunk.chunkIndex << std::endl;
             player->m_readOffsetInFrontChunk = 0;
             player->m_rollingBuffer.pop_front();
             player->m_bufferCV.notify_all(); // Notify producer that space is available
         }
     }
     
+    // std::cout << "[ds_read] Returning " << bytesRead << " bytes" << std::endl;
     if (pBytesRead) *pBytesRead = bytesRead;
     return MA_SUCCESS; 
 }
 
 ma_result AudioPlayer::ds_seek(ma_decoder* pDecoder, ma_int64 byteOffset, ma_seek_origin origin) {
-    return MA_SUCCESS; // Seeking disabled for now
+    AudioPlayer* player = (AudioPlayer*)pDecoder->pUserData;
+    
+    // Constant for PIRA v2
+    const size_t chunkSize = 176400; 
+    
+    // Total estimated size
+    size_t totalSize = player->m_totalChunks * chunkSize;
+    
+    // Track current logical position in stream (bytes read so far)
+    // We estimate based on which chunk is at front of buffer and the read offset
+    size_t currentStreamPos = 0;
+    {
+        std::lock_guard<std::mutex> lock(player->m_bufferMutex);
+        if (!player->m_rollingBuffer.empty()) {
+            currentStreamPos = player->m_rollingBuffer.front().chunkIndex * chunkSize + player->m_readOffsetInFrontChunk;
+        }
+    }
+
+    // Calculate absolute byte position
+    size_t targetPos = 0;
+    if (origin == ma_seek_origin_start) {
+        targetPos = byteOffset;
+    } else if (origin == ma_seek_origin_current) {
+        targetPos = currentStreamPos + byteOffset;
+    } else if (origin == ma_seek_origin_end) {
+        targetPos = totalSize + byteOffset; // byteOffset is typically negative
+    }
+    
+    // Clamp
+    if (targetPos > totalSize) targetPos = totalSize;
+    
+    size_t chunkIndex = targetPos / chunkSize;
+    size_t offsetInChunk = targetPos % chunkSize;
+    
+    std::cout << "[ds_seek] Request: " << byteOffset << " Origin: " << (int)origin 
+              << " -> Target: " << targetPos << " (Chunk " << chunkIndex << "+" << offsetInChunk << ")" << std::endl;
+    
+    std::unique_lock<std::mutex> lock(player->m_bufferMutex);
+    
+    // OPTIMIZATION: If seeking within the currently buffered range, just adjust read offset
+    // This prevents clearing the buffer during ma_decoder_init's probing
+    if (!player->m_rollingBuffer.empty()) {
+        size_t frontChunk = player->m_rollingBuffer.front().chunkIndex;
+        size_t backChunk = player->m_rollingBuffer.back().chunkIndex;
+        
+        if (chunkIndex >= frontChunk && chunkIndex <= backChunk) {
+            // Target is within buffered range - find the chunk and adjust
+            for (auto it = player->m_rollingBuffer.begin(); it != player->m_rollingBuffer.end(); ++it) {
+                if (it->chunkIndex == chunkIndex) {
+                    // Calculate bytes to pop from front
+                    size_t chunksToPop = std::distance(player->m_rollingBuffer.begin(), it);
+                    for (size_t i = 0; i < chunksToPop; ++i) {
+                        player->m_rollingBuffer.pop_front();
+                    }
+                    player->m_readOffsetInFrontChunk = offsetInChunk;
+                    std::cout << "[ds_seek] Optimized - staying in buffer (popped " << chunksToPop << " chunks)" << std::endl;
+                    return MA_SUCCESS;
+                }
+            }
+        }
+    }
+    
+    // Full seek: clear buffer and request refill from decryptionLoop
+    std::cout << "[ds_seek] Full seek to chunk " << chunkIndex << std::endl;
+    player->m_seekRequested = true;
+    player->m_seekTargetChunk = chunkIndex;
+    player->m_seekOffsetInChunk = offsetInChunk;
+        
+    player->m_rollingBuffer.clear();
+    player->m_readOffsetInFrontChunk = offsetInChunk; 
+        
+    player->m_bufferCV.notify_all(); // Wake decryption thread
+    
+    // Wait for decryptionLoop to fill at least one chunk after seek
+    // This is CRITICAL for ma_decoder_init which needs immediate data after seek
+    player->m_bufferCV.wait_for(lock, std::chrono::seconds(3), [player, chunkIndex]() {
+        if (player->m_stopSignal) return true;
+        if (player->m_rollingBuffer.empty()) return false;
+        // Verify we have the target chunk
+        return player->m_rollingBuffer.front().chunkIndex == chunkIndex;
+    });
+    
+    if (player->m_rollingBuffer.empty()) {
+        std::cerr << "[ds_seek] WARNING: Timeout waiting for buffer refill after seek!" << std::endl;
+    } else {
+        std::cout << "[ds_seek] Buffer refilled with chunk " << player->m_rollingBuffer.front().chunkIndex << std::endl;
+    }
+    
+    player->m_seekRequested = false; // Clear seek flag after refill
+    
+    return MA_SUCCESS;
 } 
 
 AudioPlayer::AudioPlayer() 
@@ -98,7 +210,7 @@ void AudioPlayer::play(const std::string& filepath) {
     stop();
     m_lastError = "";
 
-    std::cerr << "[AudioPlayer] Opening encrypted file: " << filepath << std::endl;
+    std::cerr << "[AudioPlayer] [" << this << "] Opening encrypted file: " << filepath << std::endl;
     
     m_currentFilePath = filepath;
     std::string serial = Abby::AbbyCrypt::getHardwareSerial();
@@ -122,20 +234,32 @@ void AudioPlayer::play(const std::string& filepath) {
     }
     g_ctx.audioData.clear(); // Unused in streaming mode
 
+    // CRITICAL: Reset state before starting threads
     m_stopSignal = false;
     m_seekRequested = false;
+    m_seekTargetChunk = 0;
+    m_seekOffsetInChunk = 0;
 
     // Start decryption thread to pre-buffer
     m_decryptionWorker = std::thread(&AudioPlayer::decryptionLoop, this, filepath);
 
     // Wait for buffer to fill slightly (prevent immediate underrun)
+    // BLOCKING WAIT for first chunk (up to 5 seconds)
     {
         std::unique_lock<std::mutex> lock(m_bufferMutex);
-        m_bufferCV.wait(lock, [this] { return !m_rollingBuffer.empty() || m_stopSignal; });
+        if(!m_bufferCV.wait_for(lock, std::chrono::seconds(5), [this] { 
+            return !m_rollingBuffer.empty() || m_stopSignal; 
+        })) {
+             std::cerr << "[AudioPlayer] Timeout waiting for pre-buffer!" << std::endl;
+             FileHandler::closeEncryptedFile();
+             m_stopSignal = true;
+             if(m_decryptionWorker.joinable()) m_decryptionWorker.join();
+             return;
+        }
     }
     
     if (m_stopSignal || m_rollingBuffer.empty()) {
-       std::cerr << "[AudioPlayer] Failed to pre-buffer" << std::endl;
+       std::cerr << "[AudioPlayer] Failed to pre-buffer (Empty/Stop)" << std::endl;
        return;
     }
 
@@ -150,6 +274,11 @@ void AudioPlayer::play(const std::string& filepath) {
         if(m_decryptionWorker.joinable()) m_decryptionWorker.join();
         return;
     }
+    
+    std::cout << "[AudioPlayer] Decoder Init OK." << std::endl;
+    std::cout << "  Format: " << g_ctx.decoder.outputFormat << std::endl;
+    std::cout << "  Channels: " << g_ctx.decoder.outputChannels << std::endl;
+    std::cout << "  SampleRate: " << g_ctx.decoder.outputSampleRate << std::endl;
     
     g_ctx.analyzer = m_analyzer.get();
 
@@ -182,15 +311,24 @@ void AudioPlayer::play(const std::string& filepath) {
     
     // Launch playback monitor
     m_playbackWorker = std::thread(&AudioPlayer::playbackLoop, this, filepath);
-    // Note: Background decryption disabled - all chunks loaded upfront
 }
 
 void AudioPlayer::stop() {
     if (m_isPlaying) {
         m_stopSignal = true;
         
+        // Wake up any threads waiting on buffer CV
+        {
+            std::lock_guard<std::mutex> lock(m_bufferMutex);
+            m_bufferCV.notify_all();
+        }
+        
         if (m_playbackWorker.joinable()) {
             m_playbackWorker.join();
+        }
+        
+        if (m_decryptionWorker.joinable()) {
+            m_decryptionWorker.join();
         }
         
         m_isPlaying = false;
@@ -251,13 +389,18 @@ float AudioPlayer::getVolume() const {
 std::string AudioPlayer::getStatus() {
     std::stringstream ss;
     if (m_isPlaying && g_ctx.initialized) {
-        ma_uint64 cursor, total;
+        ma_uint64 cursor;
+        // ma_uint64 total;
         ma_decoder_get_cursor_in_pcm_frames(&g_ctx.decoder, &cursor);
-        ma_decoder_get_length_in_pcm_frames(&g_ctx.decoder, &total);
+        // ma_decoder_get_length_in_pcm_frames(&g_ctx.decoder, &total);
         
+        // float currentSec = (float)cursor / (float)g_ctx.decoder.outputSampleRate;
+        // float totalSec = (float)total / (float)g_ctx.decoder.outputSampleRate;
+        
+        // Approximate duration
         float currentSec = (float)cursor / (float)g_ctx.decoder.outputSampleRate;
-        float totalSec = (float)total / (float)g_ctx.decoder.outputSampleRate;
-        
+        float totalSec = (float)m_totalChunks; // 1 chunk ~= 1 second
+
         if (m_isPaused) {
             ss << "PAUSED [" << (int)currentSec << "s / " << (int)totalSec << "s]";
         } else {
@@ -280,12 +423,13 @@ AudioPlayer::PlaybackState AudioPlayer::getPlaybackState() {
     state.volume = m_volume;
     
     if (m_isPlaying && g_ctx.initialized) {
-        ma_uint64 cursor, total;
+        ma_uint64 cursor; 
+        // ma_uint64 total;
         ma_decoder_get_cursor_in_pcm_frames(&g_ctx.decoder, &cursor);
-        ma_decoder_get_length_in_pcm_frames(&g_ctx.decoder, &total);
+        // ma_decoder_get_length_in_pcm_frames(&g_ctx.decoder, &total);
         
         state.currentTime = (float)cursor / (float)g_ctx.decoder.outputSampleRate;
-        state.totalTime = (float)total / (float)g_ctx.decoder.outputSampleRate;
+        state.totalTime = (float)m_totalChunks; // total / (float)g_ctx.decoder.outputSampleRate;
     }
     return state;
 }
@@ -296,39 +440,61 @@ void AudioPlayer::playbackLoop(std::string path) {
     while (!m_stopSignal) {
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
         
-        ma_uint64 cursor, total;
-        ma_decoder_get_cursor_in_pcm_frames(&g_ctx.decoder, &cursor);
-        ma_decoder_get_length_in_pcm_frames(&g_ctx.decoder, &total);
+        // ma_uint64 cursor, total;
+        // ma_decoder_get_cursor_in_pcm_frames(&g_ctx.decoder, &cursor);
+        // ma_decoder_get_length_in_pcm_frames(&g_ctx.decoder, &total);
         
-        if (cursor >= total && total > 0) {
-            std::cout << "\n[AudioPlayer] Window finished, checking for more..." << std::endl;
-            
-            // Check if there are more chunks
-            size_t nextChunk = FileHandler::getCurrentChunk();
-            if (nextChunk >= m_totalChunks) {
-                std::cout << "[AudioPlayer] Track complete" << std::endl;
-                m_isPlaying = false;
-                break;
-            }
-        }
+        // if (cursor >= total && total > 0) {
+        //    std::cout << "\n[AudioPlayer] Window finished, checking for more..." << std::endl;
+        //    
+        //    // Check if there are more chunks
+        //    size_t nextChunk = FileHandler::getCurrentChunk();
+        //    if (nextChunk >= m_totalChunks) {
+        //        std::cout << "[AudioPlayer] Track complete" << std::endl;
+        //        m_isPlaying = false;
+        //        break;
+        //    }
+        // }
+        // For now, rely on ds_read EOF logic or user stop
+        // Optimization: check if we are playing and cursor is moving? 
     }
     
     std::cout << "[AudioPlayer] Playback monitor stopped" << std::endl;
 }
 
 void AudioPlayer::decryptionLoop(std::string path) {
-    std::cout << "[AudioPlayer] Decryption thread started" << std::endl;
+    std::cout << "[AudioPlayer] [" << this << "] Decryption thread started" << std::endl;
     
     // Define max buffer size (e.g., 20 chunks ~ 20MB)
     const size_t MAX_BUFFER_CHUNKS = 20;
 
     while (!m_stopSignal) {
-        // Flow Control: Block if buffer is full
+        size_t fetchChunkIndex = 0;
+        
+        // Flow Control & Seek Handling
         {
             std::unique_lock<std::mutex> lock(m_bufferMutex);
+            
+            // Check seek
+            if (m_seekRequested) {
+                size_t target = m_seekTargetChunk;
+                m_seekRequested = false;
+                lock.unlock(); // Unlock for IO
+                
+                std::cout << "[AudioPlayer] Executing seek to chunk " << target << std::endl;
+                Abby::AbbyCrypt::seekToChunk(target);
+                
+                lock.lock();
+                m_rollingBuffer.clear();
+                // m_readOffsetInFrontChunk was set by ds_seek, keep it.
+                // Reset seek flag done.
+            }
+
             m_bufferCV.wait(lock, [this, MAX_BUFFER_CHUNKS]() { 
                 return m_rollingBuffer.size() < MAX_BUFFER_CHUNKS || m_stopSignal || m_seekRequested;
             });
+            
+            if (m_seekRequested) continue; // Loop back to handle seek immediately
         }
         
         if (m_stopSignal) break;
@@ -355,13 +521,25 @@ void AudioPlayer::decryptionLoop(std::string path) {
                 AudioChunk ac;
                 ac.data = std::move(newChunk);
                 ac.chunkIndex = currentChunk;
+                
+                // Debug dump first chunk's header
+                if (currentChunk == 0 && !ac.data.empty()) {
+                    std::cout << "[AudioPlayer] [" << this << "] First Chunk Header (32 bytes): ";
+                    for(size_t i=0; i<32 && i<ac.data.size(); i++) {
+                        char buf[4];
+                        sprintf(buf, "%02X ", ac.data[i]);
+                        std::cout << buf;
+                    }
+                    std::cout << std::endl;
+                }
+                
                 m_rollingBuffer.push_back(std::move(ac));
                 
                 m_bufferCV.notify_all(); // Notify reader
                 
                 // Debug log occasionally
                 if (m_rollingBuffer.size() % 5 == 0) {
-                     std::cout << "[AudioPlayer] Buffered " << m_rollingBuffer.size() << " chunks. Next: " << currentChunk + 1 << std::endl;
+                     std::cout << "[AudioPlayer] [" << this << "] Buffered " << m_rollingBuffer.size() << " chunks. Next: " << currentChunk + 1 << std::endl;
                 }
             }
         } else {

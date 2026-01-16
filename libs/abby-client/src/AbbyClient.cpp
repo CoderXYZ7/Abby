@@ -51,24 +51,49 @@ bool AbbyClient::ensureConnected() {
 }
 
 std::string AbbyClient::sendCommand(const std::string& cmd) {
-    // Use system(nc) as robust workaround for socket issues
-    std::string cmdStr = "printf \"" + cmd + "\\n\" | nc -w5 -U " + std::string(ABBY_SOCKET_PATH);
-    
-    FILE* pipe = popen(cmdStr.c_str(), "r");
-    if (!pipe) return "ERROR: popen failed";
-    
-    char buffer[128] = {0};
-    std::string result = "";
-    while (fgets(buffer, 128, pipe) != NULL) {
-        result += buffer;
+    if (!ensureConnected()) {
+        std::cerr << "[AbbyClient] Connect failed" << std::endl;
+        return "ERROR: Not connected to daemon";
     }
-    pclose(pipe);
+
+    // Set timeout (10 seconds - daemon may need time for audio init)
+    struct timeval tv;
+    tv.tv_sec = 10;
+    tv.tv_usec = 0;
+    setsockopt(m_socket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
+    setsockopt(m_socket, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof(tv));
+
+    // Send command
+    std::string cmdWithNewline = cmd + "\n";
+    ssize_t sent = ::send(m_socket, cmdWithNewline.c_str(), cmdWithNewline.length(), 0);
+    if (sent < 0) {
+        perror("[AbbyClient] Send failed");
+        disconnect(); 
+        return "ERROR: Send failed";
+    }
+
+    // Read response
+    char buffer[1024] = {0};
+    ssize_t received = ::read(m_socket, buffer, 1023);
+    if (received < 0) {
+        std::cerr << "[AbbyClient] Read timeout or error" << std::endl;
+        disconnect();
+        return "ERROR: Read failed"; 
+    }
     
-    // Default OK if empty (fire and forget success)
-    if (result.empty()) return "OK (No response)"; 
+    if (received == 0) {
+        // std::cerr << "[AbbyClient] Server closed connection" << std::endl;
+        disconnect();
+        return "ERROR: Connection closed by daemon";
+    }
+
+    std::string result(buffer, received);
     
     // Trim
     while (!result.empty() && (result.back() == '\n' || result.back() == '\r')) result.pop_back();
+    
+    disconnect(); 
+
     return result;
 }
 

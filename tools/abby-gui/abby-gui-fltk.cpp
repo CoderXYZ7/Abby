@@ -5,9 +5,11 @@
 #include <FL/Fl_Input.H>
 #include <FL/Fl_Output.H>
 #include <FL/Fl_File_Chooser.H>
+#include <FL/Fl_Hold_Browser.H>
 #include <FL/Fl_Slider.H>
 #include <FL/fl_draw.H>
 #include <FL/fl_ask.H>
+#include <stdarg.h>
 
 #include <FL/Fl_Tabs.H>
 #include <FL/Fl_Group.H>
@@ -59,14 +61,37 @@ class AbbyWindow : public Fl_Window {
     float totalDuration = 0.0f;
     bool userSeeking = false;
     
-    // Connector Tab Components
+    // Connector/Bluetooth Tab Components
     Fl_Input* elizUserInput;
+    Fl_Input* elizPasswordInput;
     Fl_Input* elizTrackInput;
     Fl_Text_Buffer* tokenBuffer;
     Fl_Text_Display* tokenDisplay;
     Fl_Box* connectorStatusBox;
     
+    // Bluetooth Mock Components
+    Fl_Hold_Browser* bleDeviceList;
+    Fl_Button* btnBleScan;
+    Fl_Button* btnBleConnect;
+    
+    // Logging Components
+    Fl_Text_Buffer* logBuffer;
+    Fl_Text_Display* logDisplay;
+    
 public:
+    void log(const char* fmt, ...) {
+        va_list args;
+        char buffer[1024];
+        va_start(args, fmt);
+        vsnprintf(buffer, 1023, fmt, args);
+        va_end(args);
+        
+        // Add timestamp?
+        logBuffer->append(buffer);
+        logBuffer->append("\n");
+        logDisplay->scroll(logDisplay->buffer()->length(), 0.0); // Scroll to bottom
+        Fl::check();
+    }
     AbbyWindow(int w, int h, const char* title) : Fl_Window(w, h, title) {
         this->color(fl_rgb_color(40, 40, 40));
         
@@ -76,8 +101,26 @@ public:
         header->labelcolor(FL_WHITE);
         header->labelfont(FL_BOLD);
         
+        // --- LOG CONSOLE (Bottom) ---
+        int logHeight = 150;
+        int tabHeight = h - 70 - logHeight - 10;
+        
+        Fl_Group* grpLog = new Fl_Group(10, h - logHeight - 10, w-20, logHeight, "Log Console");
+        grpLog->box(FL_FLAT_BOX);
+        grpLog->color(fl_rgb_color(30, 30, 30));
+        
+        logBuffer = new Fl_Text_Buffer();
+        logDisplay = new Fl_Text_Display(10, h - logHeight - 10 + 20, w-20, logHeight - 20, "System Logs");
+        logDisplay->buffer(logBuffer);
+        logDisplay->textfont(FL_COURIER);
+        logDisplay->textsize(12);
+        logDisplay->textcolor(FL_GREEN);
+        logDisplay->color(fl_rgb_color(20, 20, 20));
+        
+        grpLog->end();
+
         // --- TABS ---
-        Fl_Tabs* tabs = new Fl_Tabs(10, 60, w-20, h-70);
+        Fl_Tabs* tabs = new Fl_Tabs(10, 60, w-20, tabHeight);
         
         // --- TAB 1: DIRECT CONTROL ---
         Fl_Group* grpDirect = new Fl_Group(10, 85, w-20, h-95, "Direct Device Control");
@@ -187,80 +230,95 @@ public:
         
         grpDirect->end();
         
-        // --- TAB 2: CONNECTOR MOCK ---
-        Fl_Group* grpConnector = new Fl_Group(10, 85, w-20, h-95, "Connector Mock Test");
+        // --- TAB 2: BLUETOOTH MANAGER ---
+        Fl_Group* grpConnector = new Fl_Group(10, 85, w-20, tabHeight-35, "Bluetooth Manager");
         grpConnector->color(fl_rgb_color(40, 40, 40));
         
         int cy = 100;
         
-        // User Input
-        Fl_Box* lblUser = new Fl_Box(20, cy, 60, 30, "User ID:");
+        // BLE Scanning Area
+        Fl_Box* lblBle = new Fl_Box(20, cy, 100, 20, "Discovered Devices:");
+        lblBle->labelcolor(FL_WHITE);
+        lblBle->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+        
+        cy += 25;
+        
+        bleDeviceList = new Fl_Hold_Browser(20, cy, w-40, 80);
+        bleDeviceList->color(fl_rgb_color(20, 20, 20));
+        bleDeviceList->textcolor(FL_WHITE);
+        bleDeviceList->textsize(14);
+        
+        cy += 90;
+        
+        btnBleScan = new Fl_Button(20, cy, 100, 30, "SCAN");
+        btnBleScan->color(fl_rgb_color(60, 100, 160));
+        btnBleScan->labelcolor(FL_WHITE);
+        btnBleScan->callback(cb_ble_scan, this);
+        
+        btnBleConnect = new Fl_Button(130, cy, 100, 30, "CONNECT");
+        btnBleConnect->color(fl_rgb_color(60, 160, 60));
+        btnBleConnect->labelcolor(FL_WHITE);
+        btnBleConnect->callback(cb_ble_connect, this);
+        btnBleConnect->deactivate(); // Active only when device selected
+        
+        cy += 40;
+        
+        // Login / Token Area (Hidden logic, simulated via UI)
+        Fl_Box* lblDev = new Fl_Box(20, cy, w-40, 1, ""); // Separator
+        lblDev->box(FL_FLAT_BOX);
+        lblDev->color(fl_rgb_color(100, 100, 100));
+        
+        cy += 10;
+        
+        Fl_Group* grpLogin = new Fl_Group(20, cy, w-40, 150, "App Credentials (Simulated)");
+        grpLogin->box(FL_BORDER_BOX);
+        grpLogin->color(fl_rgb_color(50, 50, 50));
+        grpLogin->align(FL_ALIGN_TOP_LEFT | FL_ALIGN_INSIDE);
+        grpLogin->labelcolor(FL_YELLOW);
+        
+        int ly = cy + 25;
+        
+        // Username
+        Fl_Box* lblUser = new Fl_Box(30, ly, 70, 25, "Username:");
         lblUser->labelcolor(FL_WHITE);
         lblUser->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
         
-        elizUserInput = new Fl_Input(90, cy, 150, 30);
-        elizUserInput->value("gui_test");
+        elizUserInput = new Fl_Input(110, ly, 140, 25);
+        elizUserInput->value("demo");
+        elizUserInput->textsize(12);
         
-        cy += 40;
+        ly += 30;
         
-        // Password Input (Visual only for now)
-        Fl_Box* lblPass = new Fl_Box(20, cy, 60, 30, "Password:");
+        // Password
+        Fl_Box* lblPass = new Fl_Box(30, ly, 70, 25, "Password:");
         lblPass->labelcolor(FL_WHITE);
         lblPass->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
         
-        Fl_Input* elizPassInput;
-        elizPassInput = new Fl_Input(90, cy, 150, 30);
-        elizPassInput->type(FL_SECRET_INPUT);
-        elizPassInput->value("password");
+        elizPasswordInput = new Fl_Input(110, ly, 140, 25);
+        elizPasswordInput->value("demo123");
+        elizPasswordInput->textsize(12);
+        elizPasswordInput->type(FL_SECRET_INPUT); // Hide password
         
-        Fl_Button* btnLogin = new Fl_Button(250, cy, 120, 30, "LOGIN (Eliz)");
-        btnLogin->color(fl_rgb_color(60, 100, 160));
+        ly += 35;
+
+        Fl_Button* btnLogin = new Fl_Button(30, ly, 120, 28, "LOGIN");
+        btnLogin->color(fl_rgb_color(60, 140, 60));
         btnLogin->labelcolor(FL_WHITE);
         btnLogin->callback(cb_eliz_login, this);
         
-        cy += 40;
-        
-        // Track Input
-        Fl_Box* lblTrack = new Fl_Box(20, cy, 60, 30, "Track ID:");
-        lblTrack->labelcolor(FL_WHITE);
-        lblTrack->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
-        
-        elizTrackInput = new Fl_Input(90, cy, 150, 30);
-        elizTrackInput->value("TRACK_001");
-        
-        cy += 40;
-        
-        // Token Display
-        Fl_Box* lblToken = new Fl_Box(20, cy, w-40, 20, "JWT Token:");
-        lblToken->labelcolor(FL_WHITE);
-        lblToken->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
-        
-        cy += 20;
-        
         tokenBuffer = new Fl_Text_Buffer();
-        tokenDisplay = new Fl_Text_Display(20, cy, w-40, 60);
-        tokenDisplay->buffer(tokenBuffer);
-        tokenDisplay->wrap_mode(Fl_Text_Display::WRAP_AT_BOUNDS, 0);
+        // tokenDisplay = new Fl_Text_Display(260, cy + 20, w-300, 110);
+        // tokenDisplay->buffer(tokenBuffer);
+        // tokenDisplay->wrap_mode(Fl_Text_Display::WRAP_AT_BOUNDS, 0);
         
-        cy += 70;
+        grpLogin->end();
         
-        // Connector Controls
-        Fl_Button* btnAuth = new Fl_Button(20, cy, 120, 40, "AUTH (TCP)");
-        btnAuth->color(fl_rgb_color(160, 100, 60));
-        btnAuth->labelcolor(FL_WHITE);
-        btnAuth->callback(cb_connector_auth, this);
+        cy = ly + 50; 
         
-        Fl_Button* btnPlay = new Fl_Button(150, cy, 120, 40, "PLAY (TCP)");
-        btnPlay->color(fl_rgb_color(60, 160, 60));
-        btnPlay->labelcolor(FL_WHITE);
-        btnPlay->callback(cb_connector_play, this);
-        
-        cy += 50;
-        
-        connectorStatusBox = new Fl_Box(20, cy, w-40, 40, "Ready to connect");
+        connectorStatusBox = new Fl_Box(20, cy, w-40, 30, "Bluetooth: Disconnected");
         connectorStatusBox->box(FL_FLAT_BOX);
         connectorStatusBox->color(fl_rgb_color(30, 30, 30));
-        connectorStatusBox->labelcolor(FL_WHITE);
+        connectorStatusBox->labelcolor(FL_RED);
         connectorStatusBox->align(FL_ALIGN_CENTER | FL_ALIGN_INSIDE);
         
         grpConnector->end();
@@ -361,51 +419,116 @@ public:
     
     // --- CONNECTOR CALLBACKS ---
     
-    static void cb_eliz_login(Fl_Widget* w, void* data) {
-        AbbyWindow* win = (AbbyWindow*)data;
-        const char* user = win->elizUserInput->value();
-        const char* track = win->elizTrackInput->value();
-        
-        std::string cmd = "curl -s -X POST https://polserverdev.ooguy.com/index.php "
-                          "-H \"Content-Type: application/json\" "
-                          "-d '{\"user_id\": \"" + std::string(user) + "\", \"permissions\": [\"" + std::string(track) + "\"], \"duration_days\": 1}'";
-                          
-        win->connectorStatusBox->label("Requesting Token..."); 
-        win->connectorStatusBox->redraw();
-        Fl::check();
+    // --- BLUETOOTH MOCK CALLBACKS ---
 
-        FILE* pipe = popen(cmd.c_str(), "r");
-        if (!pipe) {
-            win->tokenBuffer->text("Error: popen failed");
-            return;
-        }
+    static void cb_ble_scan(Fl_Widget* w, void* data) {
+        AbbyWindow* win = (AbbyWindow*)data;
+        win->log("[BLE] Scanning for devices...");
+        win->bleDeviceList->clear();
+        win->bleDeviceList->add("Scanning...");
+        win->btnBleScan->deactivate();
         
-        char buffer[1024];
-        std::string result = "";
-        while (fgets(buffer, 1024, pipe) != NULL) {
-            result += buffer;
-        }
-        pclose(pipe);
-        
-        // Simple JSON parse for "token": "..."
-        size_t pos = result.find("\"token\"");
-        if (pos != std::string::npos) {
-             size_t start = result.find("\"", pos + 8);
-             size_t end = result.find("\"", start + 1);
-             if (start != std::string::npos && end != std::string::npos) {
-                 std::string token = result.substr(start + 1, end - start - 1);
-                 win->tokenBuffer->text(token.c_str());
-                 win->connectorStatusBox->label("Token Received!");
-                 win->connectorStatusBox->labelcolor(FL_GREEN);
-                 return;
-             }
-        }
-        
-        win->tokenBuffer->text(result.c_str()); // Show full error/response if parse fails
-        win->connectorStatusBox->label("Login Failed");
-        win->connectorStatusBox->labelcolor(FL_RED);
+        Fl::add_timeout(1.5, [](void* d) {
+            AbbyWindow* W = (AbbyWindow*)d;
+            W->bleDeviceList->clear();
+            W->bleDeviceList->add("Abby Player (BLE) - [RSSI: -45dB]");
+            W->bleDeviceList->add("Unknown Device - [RSSI: -80dB]");
+            W->bleDeviceList->select(1);
+            W->log("[BLE] Found 2 devices.");
+            W->btnBleScan->activate();
+            W->btnBleConnect->activate();
+        }, win);
     }
     
+    static void cb_ble_connect(Fl_Widget* w, void* data) {
+        AbbyWindow* win = (AbbyWindow*)data;
+        int sel = win->bleDeviceList->value();
+        if (sel == 0) return;
+        
+        const char* txt = win->bleDeviceList->text(sel);
+        win->log("[BLE] Connecting to: %s", txt);
+        win->btnBleConnect->deactivate();
+        win->connectorStatusBox->label("Bluetooth: Connecting...");
+        
+        Fl::add_timeout(1.0, [](void* d) {
+             AbbyWindow* W = (AbbyWindow*)d;
+             W->log("[BLE] Connected! Service Discovery complete.");
+             W->log("[BLE] Service UUID: 0x180A, 0xAB84");
+             W->connectorStatusBox->label("Bluetooth: Connected");
+             W->connectorStatusBox->labelcolor(FL_GREEN);
+             
+             // Auto-authenticate via TCP to simulate BLE channel
+             // If we have a token, use it.
+             char* token = W->tokenBuffer->text();
+             if (token && strlen(token) > 0) {
+                 W->log("[Connector] Sending AUTH token via BLE...");
+                 W->sendToConnector("AUTH " + std::string(token));
+             } else {
+                 W->log("[Connector] Connected, but no token loaded.");
+             }
+        }, win);
+    }
+
+    // --- CONNECTOR CALLBACKS ---
+    
+    static void cb_eliz_login(Fl_Widget* w, void* data) {
+    AbbyWindow* win = (AbbyWindow*)data;
+    const char* user = win->elizUserInput->value();
+    const char* pass = win->elizPasswordInput->value();
+    
+    if (!user || strlen(user) == 0 || !pass || strlen(pass) == 0) {
+        win->log("[LOGIN] Error: Username and password are required");
+        return;
+    }
+    
+    win->log("[LOGIN] Authenticating user: %s", user);
+    
+    // Build login request
+    std::string cmd = "curl -s -X POST https://polserverdev.ooguy.com/index.php "
+                      "-H \"Content-Type: application/json\" "
+                      "-d '{\"username\": \"" + std::string(user) + "\", "
+                      "\"password\": \"" + std::string(pass) + "\"}'";
+                      
+    win->log("[LOGIN] POST /index.php ...");
+    
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe) {
+        win->log("[LOGIN] Error: curl failed");
+        return;
+    }
+    
+    char buffer[2048];
+    std::string result = "";
+    while (fgets(buffer, sizeof(buffer), pipe) != NULL) {
+        result += buffer;
+    }
+    pclose(pipe);
+    
+    // Check for token in response
+    size_t pos = result.find("\"token\"");
+    if (pos != std::string::npos) {
+         size_t start = result.find("\"", pos + 8);
+         size_t end = result.find("\"", start + 1);
+         if (start != std::string::npos && end != std::string::npos) {
+             std::string token = result.substr(start + 1, end - start - 1);
+             win->tokenBuffer->text(token.c_str());
+             win->log("[LOGIN] Success! Token received (Length: %lu)", token.length());
+             win->connectorStatusBox->label("Authenticated");
+             win->connectorStatusBox->labelcolor(FL_GREEN);
+             return;
+         }
+    }
+    
+    // Check for error message
+    size_t errPos = result.find("\"error\"");
+    if (errPos != std::string::npos) {
+        win->log("[LOGIN] Failed: %s", result.c_str());
+    } else {
+        win->log("[LOGIN] Failed. Response: %s", result.c_str());
+    }
+    win->connectorStatusBox->label("Auth Failed");
+    win->connectorStatusBox->labelcolor(FL_RED);
+}    
     void sendToConnector(const std::string& msg) {
         int sock = 0;
         struct sockaddr_in serv_addr;
@@ -426,26 +549,25 @@ public:
         }
 
         if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
-            connectorStatusBox->label("Connection Failed (Is Connector running?)");
+            log("[Connector] Error: Connection Failed (Is Connector running?)");
             close(sock);
             return;
         }
 
         std::string msgWithNewline = msg + "\n";
         send(sock, msgWithNewline.c_str(), msgWithNewline.length(), 0);
+        log("[Connector] Sent: %s", msg.c_str());
         
         int valread = read(sock, buffer, 1024);
         close(sock);
         
         if (valread > 0) {
             buffer[valread] = 0;
-            // Hacky way to update label since we are in member function 
-            // but usually called from static callback with 'this'
-            // We'll update the label text but string must persist? 
-            // Actually FLTK copies label if we use label(copy=0 which is default? no, copy is not default)
-            // Fl_Widget::copy_label() is safer.
-            connectorStatusBox->copy_label(buffer);
-            connectorStatusBox->labelcolor(FL_WHITE);
+            log("[Connector] Recv: %s", buffer);
+            if (std::string(buffer).find("AUTH_OK") != std::string::npos) {
+                 connectorStatusBox->label("Bluetooth: Authenticated");
+                 connectorStatusBox->labelcolor(FL_GREEN);
+            }
         }
     }
     
@@ -522,12 +644,13 @@ int main(int argc, char **argv) {
                          (test.find("PAUSED") != std::string::npos);
 
     if (!daemonRunning) {
-        std::cout << "Daemon status check failed (" << test << "). Starting AbbyPlayer daemon..." << std::endl;
-        // Use full relative path assuming run from project root, or absolute
-        fs::path cwd = fs::current_path();
-        std::cout << "CWD: " << cwd.string() << std::endl;
-        
-        // Log to /tmp/abby_daemon.log for debugging
+            std::cout << "Daemon status check failed (" << test << "). Starting AbbyPlayer daemon..." << std::endl;
+            // Use full relative path assuming run from project root, or absolute
+            fs::path cwd = fs::current_path();
+            // std::cout << "CWD: " << cwd.string() << std::endl;
+            
+            // Log to /tmp/abby_daemon.log for debugging
+    
         system("device/AbbyPlayer/build/AbbyPlayer --daemon > /tmp/abby_daemon.log 2>&1 &");
         sleep(2);
     }
@@ -546,7 +669,7 @@ int main(int argc, char **argv) {
     }
     close(sock);
 
-    AbbyWindow *window = new AbbyWindow(500, 450, "Abby Control");
+    AbbyWindow *window = new AbbyWindow(900, 700, "Abby Control Center");
     window->show(argc, argv);
     return Fl::run();
 }
