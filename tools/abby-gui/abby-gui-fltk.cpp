@@ -700,8 +700,8 @@ public:
         
         win->log("[PLAY] Getting key for track: %s", trackId.c_str());
         
-        // Get track key
-        std::string cmd = "curl -s -X GET \"https://polserverdev.ooguy.com/api/tracks.php/" + trackId + "/key\" "
+        // Get track key using query parameters (nginx compatible)
+        std::string cmd = "curl -s -X GET \"https://polserverdev.ooguy.com/api/tracks.php?action=key&id=" + trackId + "\" "
                           "-H \"Authorization: Bearer " + win->authToken + "\"";
         
         FILE* pipe = popen(cmd.c_str(), "r");
