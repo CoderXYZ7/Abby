@@ -77,6 +77,10 @@ class AbbyWindow : public Fl_Window {
     // Track List Components (after login)
     Fl_Hold_Browser* trackList;
     Fl_Button* btnPlayTrack;
+    Fl_Button* btnBlePause;
+    Fl_Button* btnBleStop;
+    Fl_Slider* bleVolumeSlider;
+    Fl_Box* blePlaybackStatus;
     std::string authToken; // Stored JWT after login
     
     // Logging Components
@@ -343,11 +347,47 @@ public:
         
         cy += 110;
         
-        btnPlayTrack = new Fl_Button(20, cy, 120, 30, "PLAY TRACK");
+        btnPlayTrack = new Fl_Button(20, cy, 100, 30, "PLAY");
         btnPlayTrack->color(fl_rgb_color(60, 140, 60));
         btnPlayTrack->labelcolor(FL_WHITE);
         btnPlayTrack->callback(cb_play_track, this);
-        btnPlayTrack->deactivate(); // Active only after login + track selection
+        btnPlayTrack->deactivate();
+        
+        btnBlePause = new Fl_Button(125, cy, 100, 30, "PAUSE");
+        btnBlePause->color(fl_rgb_color(180, 140, 40));
+        btnBlePause->labelcolor(FL_WHITE);
+        btnBlePause->callback(cb_ble_pause, this);
+        btnBlePause->deactivate();
+        
+        btnBleStop = new Fl_Button(230, cy, 100, 30, "STOP");
+        btnBleStop->color(fl_rgb_color(180, 60, 60));
+        btnBleStop->labelcolor(FL_WHITE);
+        btnBleStop->callback(cb_ble_stop, this);
+        btnBleStop->deactivate();
+        
+        cy += 40;
+        
+        // Volume control for BLE
+        Fl_Box* lblBleVol = new Fl_Box(20, cy, 60, 25, "Volume:");
+        lblBleVol->labelcolor(FL_WHITE);
+        lblBleVol->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+        
+        bleVolumeSlider = new Fl_Slider(85, cy, w-110, 20);
+        bleVolumeSlider->type(FL_HOR_NICE_SLIDER);
+        bleVolumeSlider->bounds(0, 100);
+        bleVolumeSlider->value(80);
+        bleVolumeSlider->color(fl_rgb_color(50, 50, 50));
+        bleVolumeSlider->selection_color(fl_rgb_color(80, 180, 255));
+        bleVolumeSlider->callback(cb_ble_volume, this);
+        
+        cy += 30;
+        
+        // BLE playback status
+        blePlaybackStatus = new Fl_Box(20, cy, w-40, 25, "Playback: Stopped");
+        blePlaybackStatus->box(FL_FLAT_BOX);
+        blePlaybackStatus->color(fl_rgb_color(30, 30, 30));
+        blePlaybackStatus->labelcolor(FL_WHITE);
+        blePlaybackStatus->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
         
         grpConnector->end();
         
@@ -598,32 +638,35 @@ public:
             return;
         }
         
-        // Parse track names - simple approach
-        size_t pos = 0;
+        // Parse tracks - each object has {"id": "...", "name": "..."}
+        // Find each "id" and then its corresponding "name"
+        size_t pos = tracksPos;
         int count = 0;
-        while ((pos = result.find("\"name\"", pos)) != std::string::npos) {
-            size_t start = result.find("\"", pos + 7);
-            size_t end = result.find("\"", start + 1);
-            if (start != std::string::npos && end != std::string::npos) {
-                std::string name = result.substr(start + 1, end - start - 1);
-                
-                // Also get ID for this track
-                size_t idPos = result.rfind("\"id\"", pos);
-                std::string trackId = "";
-                if (idPos != std::string::npos && idPos > pos - 100) {
-                    size_t idStart = result.find("\"", idPos + 5);
-                    size_t idEnd = result.find("\"", idStart + 1);
-                    if (idStart != std::string::npos && idEnd != std::string::npos) {
-                        trackId = result.substr(idStart + 1, idEnd - idStart - 1);
-                    }
-                }
-                
-                // Format: "TrackName [ID]"
-                std::string label = name + " [" + trackId + "]";
-                trackList->add(label.c_str());
-                count++;
+        while ((pos = result.find("\"id\"", pos)) != std::string::npos) {
+            // Get ID value
+            size_t idStart = result.find("\"", pos + 5);
+            size_t idEnd = result.find("\"", idStart + 1);
+            if (idStart == std::string::npos || idEnd == std::string::npos) break;
+            std::string trackId = result.substr(idStart + 1, idEnd - idStart - 1);
+            
+            // Find name after this id
+            size_t namePos = result.find("\"name\"", idEnd);
+            if (namePos == std::string::npos || namePos > pos + 200) {
+                pos = idEnd + 1;
+                continue;
             }
-            pos = end + 1;
+            
+            size_t nameStart = result.find("\"", namePos + 7);
+            size_t nameEnd = result.find("\"", nameStart + 1);
+            if (nameStart == std::string::npos || nameEnd == std::string::npos) break;
+            std::string name = result.substr(nameStart + 1, nameEnd - nameStart - 1);
+            
+            // Format: "TrackName [ID]"
+            std::string label = name + " [" + trackId + "]";
+            trackList->add(label.c_str());
+            count++;
+            
+            pos = nameEnd + 1;
         }
         
         if (count > 0) {
@@ -698,7 +741,57 @@ public:
         std::string playCmd = "play device/audio/" + trackId + ".pira";
         sendCommand(playCmd);
         
+        // Enable playback controls
+        win->btnBlePause->activate();
+        win->btnBleStop->activate();
+        win->blePlaybackStatus->label("Playback: Playing");
+        win->blePlaybackStatus->labelcolor(FL_GREEN);
+        
         win->log("[PLAY] Track playback started via mock BLE");
+    }
+    
+    static void cb_ble_pause(Fl_Widget* w, void* data) {
+        AbbyWindow* win = (AbbyWindow*)data;
+        
+        std::string status = sendCommand("status");
+        if (status.find("PAUSED") != std::string::npos) {
+            // Currently paused, resume
+            sendCommand("resume");
+            win->log("[BLE] Resuming playback via mock BLE");
+            win->blePlaybackStatus->label("Playback: Playing");
+            win->blePlaybackStatus->labelcolor(FL_GREEN);
+            win->btnBlePause->label("PAUSE");
+        } else {
+            // Currently playing, pause
+            sendCommand("pause");
+            win->log("[BLE] Pausing playback via mock BLE");
+            win->blePlaybackStatus->label("Playback: Paused");
+            win->blePlaybackStatus->labelcolor(FL_YELLOW);
+            win->btnBlePause->label("RESUME");
+        }
+    }
+    
+    static void cb_ble_stop(Fl_Widget* w, void* data) {
+        AbbyWindow* win = (AbbyWindow*)data;
+        
+        sendCommand("stop");
+        win->log("[BLE] Stopping playback via mock BLE");
+        
+        win->blePlaybackStatus->label("Playback: Stopped");
+        win->blePlaybackStatus->labelcolor(FL_WHITE);
+        win->btnBlePause->label("PAUSE");
+        win->btnBlePause->deactivate();
+        win->btnBleStop->deactivate();
+    }
+    
+    static void cb_ble_volume(Fl_Widget* w, void* data) {
+        AbbyWindow* win = (AbbyWindow*)data;
+        Fl_Slider* slider = (Fl_Slider*)w;
+        int vol = (int)slider->value();
+        
+        std::string cmd = "volume " + std::to_string(vol / 100.0);
+        sendCommand(cmd);
+        win->log("[BLE] Volume set to %d%% via mock BLE", vol);
     }
     
     void sendToConnector(const std::string& msg) {
@@ -841,7 +934,7 @@ int main(int argc, char **argv) {
     }
     close(sock);
 
-    AbbyWindow *window = new AbbyWindow(900, 700, "Abby Control Center");
+    AbbyWindow *window = new AbbyWindow(900, 850, "Abby Control Center");
     window->show(argc, argv);
     return Fl::run();
 }
