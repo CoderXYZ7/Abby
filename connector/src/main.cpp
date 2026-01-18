@@ -177,23 +177,42 @@ std::string handleCommand(const std::string& cmdLine) {
 int main(int argc, char* argv[]) {
     std::cout << "[AbbyConnector] Starting..." << std::endl;
     
-    // Check for BLE mode flag
+    // Parse command line flags
     bool bleEnabled = false;
+    bool debugMode = false;
     for (int i = 1; i < argc; i++) {
-        if (std::string(argv[i]) == "--ble") {
-            bleEnabled = true;
+        std::string arg = argv[i];
+        if (arg == "--ble") bleEnabled = true;
+        else if (arg == "--debug") debugMode = true;
+        else if (arg == "--help" || arg == "-h") {
+            std::cout << "Usage: AbbyConnector [options]\n"
+                      << "  --debug   Interactive CLI mode\n"
+                      << "  --ble     Enable BLE GATT server\n";
+            return 0;
         }
     }
     
-    // Load catalog
-    if (!g_catalog.load("connector/config/catalog.json")) {
-        std::cerr << "Failed to load catalog!" << std::endl;
+    // Find catalog (try multiple paths)
+    std::string catalogPath = "connector/config/catalog.json";
+    if (access(catalogPath.c_str(), F_OK) == -1) {
+        if (access("config/catalog.json", F_OK) != -1) {
+            catalogPath = "config/catalog.json";
+        } else if (access("../config/catalog.json", F_OK) != -1) {
+            catalogPath = "../config/catalog.json";
+        }
+    }
+    
+    if (!g_catalog.load(catalogPath)) {
+        std::cerr << "Failed to load catalog from " << catalogPath << std::endl;
         return 1;
     }
+    std::cout << "[AbbyConnector] Loaded catalog from " << catalogPath << std::endl;
     
     // Connect to AbbyPlayer daemon
     if (!g_client.connect()) {
         std::cerr << "Warning: Could not connect to AbbyPlayer daemon. Is it running?" << std::endl;
+    } else {
+        std::cout << "[AbbyConnector] Connected to AbbyPlayer daemon" << std::endl;
     }
     
     // Start BLE server if enabled
@@ -205,7 +224,32 @@ int main(int argc, char* argv[]) {
         }
     }
     
-    // TCP Server
+    // ===== DEBUG MODE: Interactive CLI =====
+    if (debugMode) {
+        std::cout << "\n[AbbyConnector] DEBUG MODE - Interactive CLI" << std::endl;
+        std::cout << "========================================" << std::endl;
+        std::cout << "Commands: AUTH <jwt>, PLAY <id>, STOP, STATUS, PLAYLIST_ADD <id>, CATALOG_LIST, etc." << std::endl;
+        
+        std::string line;
+        while (true) {
+            std::cout << "\nabby> ";
+            std::cout.flush();
+            if (!std::getline(std::cin, line)) break;
+            
+            // Trim
+            while (!line.empty() && isspace(line.back())) line.pop_back();
+            while (!line.empty() && isspace(line.front())) line.erase(0, 1);
+            if (line.empty()) continue;
+            
+            if (line == "quit" || line == "exit") break;
+            
+            std::string response = handleCommand(line);
+            std::cout << response;
+        }
+        return 0;
+    }
+    
+    // ===== NORMAL MODE: TCP Server =====
     int server_fd, new_socket;
     struct sockaddr_in address;
     int opt = 1;
@@ -236,9 +280,7 @@ int main(int argc, char* argv[]) {
     }
     
     std::cout << "[AbbyConnector] Listening on port " << PORT << std::endl;
-    if (bleEnabled) {
-        std::cout << "[AbbyConnector] BLE GATT server also active" << std::endl;
-    }
+    if (bleEnabled) std::cout << "[AbbyConnector] BLE GATT server also active" << std::endl;
     
     while (true) {
         if ((new_socket = accept(server_fd, (struct sockaddr*)&address, &addrlen)) < 0) {
