@@ -9,12 +9,12 @@ if(CMAKE_BUILD_TYPE MATCHES "Release")
     add_link_options("-s")
 endif()
 
-add_subdirectory(../AbbyCrypt ${CMAKE_CURRENT_BINARY_DIR}/AbbyCrypt)
-add_subdirectory(../../libs/abby-client ${CMAKE_CURRENT_BINARY_DIR}/abby-client)
+add_subdirectory(../crypt ${CMAKE_CURRENT_BINARY_DIR}/AbbyCrypt)
+add_subdirectory(../client ${CMAKE_CURRENT_BINARY_DIR}/abby-client)
 
 include_directories(include)
-include_directories(../AbbyCrypt/include)
-include_directories(../../libs/abby-client/include)
+include_directories(../crypt/include)
+include_directories(../client/include)
 
 add_executable(AbbyPlayer
     src/main.cpp
