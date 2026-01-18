@@ -177,11 +177,21 @@ std::string handleCommand(const std::string& cmdLine) {
 int main(int argc, char* argv[]) {
     std::cout << "[AbbyConnector] Starting..." << std::endl;
     
-    // Check for BLE mode flag
+    // Parse command line flags
     bool bleEnabled = false;
+    bool debugMode = false;
     for (int i = 1; i < argc; i++) {
         if (std::string(argv[i]) == "--ble") {
             bleEnabled = true;
+        } else if (std::string(argv[i]) == "--debug") {
+            debugMode = true;
+        } else if (std::string(argv[i]) == "--help" || std::string(argv[i]) == "-h") {
+            std::cout << "Usage: AbbyConnector [options]\n"
+                      << "Options:\n"
+                      << "  --debug   Interactive CLI mode (no TCP server)\n"
+                      << "  --ble     Enable BLE GATT server\n"
+                      << "  --help    Show this help\n";
+            return 0;
         }
     }
     
@@ -194,6 +204,8 @@ int main(int argc, char* argv[]) {
     // Connect to AbbyPlayer daemon
     if (!g_client.connect()) {
         std::cerr << "Warning: Could not connect to AbbyPlayer daemon. Is it running?" << std::endl;
+    } else {
+        std::cout << "[AbbyConnector] Connected to AbbyPlayer daemon" << std::endl;
     }
     
     // Start BLE server if enabled
@@ -205,7 +217,53 @@ int main(int argc, char* argv[]) {
         }
     }
     
-    // TCP Server
+    // ===== DEBUG MODE: Interactive CLI =====
+    if (debugMode) {
+        std::cout << "\n[AbbyConnector] DEBUG MODE - Interactive CLI" << std::endl;
+        std::cout << "========================================" << std::endl;
+        std::cout << "Commands:" << std::endl;
+        std::cout << "  AUTH <jwt>              - Authenticate with JWT" << std::endl;
+        std::cout << "  PLAY <track_id>         - Play a track" << std::endl;
+        std::cout << "  STOP / PAUSE / RESUME   - Playback control" << std::endl;
+        std::cout << "  VOLUME <0.0-1.0>        - Set volume" << std::endl;
+        std::cout << "  STATUS                  - Get playback status" << std::endl;
+        std::cout << "  PLAYLIST_ADD <id>       - Add track to playlist" << std::endl;
+        std::cout << "  PLAYLIST_GET            - Show playlist" << std::endl;
+        std::cout << "  PLAYLIST_NEXT/PREV      - Navigate playlist" << std::endl;
+        std::cout << "  PLAYLIST_SHUFFLE on|off - Toggle shuffle" << std::endl;
+        std::cout << "  PLAYLIST_REPEAT none|one|all" << std::endl;
+        std::cout << "  CATALOG_LIST            - List available tracks" << std::endl;
+        std::cout << "  quit / exit             - Exit debug mode" << std::endl;
+        std::cout << "========================================" << std::endl;
+        
+        std::string line;
+        while (true) {
+            std::cout << "\nabby> ";
+            std::cout.flush();
+            
+            if (!std::getline(std::cin, line)) {
+                break; // EOF
+            }
+            
+            // Trim whitespace
+            while (!line.empty() && (line.back() == ' ' || line.back() == '\t')) line.pop_back();
+            while (!line.empty() && (line.front() == ' ' || line.front() == '\t')) line.erase(0, 1);
+            
+            if (line.empty()) continue;
+            
+            if (line == "quit" || line == "exit") {
+                std::cout << "[AbbyConnector] Exiting debug mode..." << std::endl;
+                break;
+            }
+            
+            std::string response = handleCommand(line);
+            std::cout << response;
+        }
+        
+        return 0;
+    }
+    
+    // ===== NORMAL MODE: TCP Server =====
     int server_fd, new_socket;
     struct sockaddr_in address;
     int opt = 1;
