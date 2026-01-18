@@ -1,0 +1,31 @@
+# Build directories
+**/build/
+**/cmake-build-*/
+
+# Compiled binaries
+*.o
+*.a
+*.so
+*.dylib
+
+# CMake artifacts
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+**/build/**/Makefile
+
+# Logs
+*.log
+
+# IDE and Editor
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.sw?
+
+# Encrypted audio files (generated)
+*.pira
+
+# System
+Thumbs.db
