@@ -11,13 +11,17 @@
 #include "AbbyClient.hpp"
 #include "JwtValidator.hpp"
 #include "ContentCatalog.hpp"
+#include "BleServer.hpp"
+#include "PlaylistManager.hpp"
 
 #define PORT 5000
 
 // Globals
 Abby::AbbyClient g_client;
-JwtValidator g_validator("device/AbbyConnector/keys/public.pem");
+JwtValidator g_validator("connector/keys/public.pem");
 ContentCatalog g_catalog;
+BleServer g_bleServer;
+PlaylistManager g_playlist;
 
 struct Session {
     bool authenticated = false;
@@ -45,6 +49,7 @@ std::string handleCommand(const std::string& cmdLine) {
     
     std::cerr << "[AbbyConnector] cmd='" << cmd << "' args='" << args << "'" << std::endl;
 
+    // ===== AUTHENTICATION =====
     if (cmd == "AUTH") {
         auto result = g_validator.validate(args);
         if (result.valid) {
@@ -56,10 +61,12 @@ std::string handleCommand(const std::string& cmdLine) {
             return "ERROR: " + result.error + "\n";
         }
     }
+    
+    // ===== PLAYBACK COMMANDS =====
     else if (cmd == "PLAY") {
         if (!g_session.authenticated) return "ERROR: Not authenticated\n";
         
-        // Check Expiry (Double check)
+        // Check Expiry 
         long exp = g_session.jwtPayload["exp"];
         time_t now = time(NULL);
         if (now > exp) return "ERROR: License expired\n";
@@ -106,25 +113,99 @@ std::string handleCommand(const std::string& cmdLine) {
         g_client.resume();
         return "OK\n";
     }
+    else if (cmd == "VOLUME") {
+        float vol = std::stof(args);
+        g_client.setVolume(vol);
+        return "OK: Volume " + std::to_string(vol) + "\n";
+    }
     else if (cmd == "STATUS") {
         return g_client.getStatus() + "\n";
+    }
+    
+    // ===== PLAYLIST COMMANDS =====
+    else if (cmd == "PLAYLIST_ADD") {
+        if (!g_session.authenticated) return "ERROR: Not authenticated\n";
+        g_playlist.addTrack(args);
+        return "OK: Added " + args + " to playlist\n";
+    }
+    else if (cmd == "PLAYLIST_REMOVE") {
+        size_t idx = std::stoul(args);
+        g_playlist.removeTrack(idx);
+        return "OK: Removed track at index " + args + "\n";
+    }
+    else if (cmd == "PLAYLIST_CLEAR") {
+        g_playlist.clearPlaylist();
+        return "OK: Playlist cleared\n";
+    }
+    else if (cmd == "PLAYLIST_GET") {
+        return g_playlist.toJson() + "\n";
+    }
+    else if (cmd == "PLAYLIST_NEXT") {
+        std::string next = g_playlist.getNextTrack();
+        if (!next.empty()) {
+            return handleCommand("PLAY " + next);
+        }
+        return "OK: End of playlist\n";
+    }
+    else if (cmd == "PLAYLIST_PREV") {
+        std::string prev = g_playlist.getPreviousTrack();
+        if (!prev.empty()) {
+            return handleCommand("PLAY " + prev);
+        }
+        return "OK: Start of playlist\n";
+    }
+    else if (cmd == "PLAYLIST_SHUFFLE") {
+        bool enable = (args == "on" || args == "true" || args == "1");
+        g_playlist.setShuffleEnabled(enable);
+        return "OK: Shuffle " + std::string(enable ? "enabled" : "disabled") + "\n";
+    }
+    else if (cmd == "PLAYLIST_REPEAT") {
+        if (args == "none") g_playlist.setRepeatMode(PlaylistManager::RepeatMode::NONE);
+        else if (args == "one") g_playlist.setRepeatMode(PlaylistManager::RepeatMode::ONE);
+        else if (args == "all") g_playlist.setRepeatMode(PlaylistManager::RepeatMode::ALL);
+        return "OK: Repeat mode set to " + args + "\n";
+    }
+    
+    // ===== CATALOG COMMANDS =====
+    else if (cmd == "CATALOG_LIST") {
+        return g_catalog.toJson() + "\n";
     }
     
     return "ERROR: Unknown command\n";
 }
 
-int main() {
+int main(int argc, char* argv[]) {
     std::cout << "[AbbyConnector] Starting..." << std::endl;
     
-    if (!g_catalog.load("device/AbbyConnector/config/catalog.json")) {
+    // Check for BLE mode flag
+    bool bleEnabled = false;
+    for (int i = 1; i < argc; i++) {
+        if (std::string(argv[i]) == "--ble") {
+            bleEnabled = true;
+        }
+    }
+    
+    // Load catalog
+    if (!g_catalog.load("connector/config/catalog.json")) {
         std::cerr << "Failed to load catalog!" << std::endl;
         return 1;
     }
     
+    // Connect to AbbyPlayer daemon
     if (!g_client.connect()) {
         std::cerr << "Warning: Could not connect to AbbyPlayer daemon. Is it running?" << std::endl;
     }
     
+    // Start BLE server if enabled
+    if (bleEnabled) {
+        std::cout << "[AbbyConnector] BLE mode enabled" << std::endl;
+        g_bleServer.setCommandHandler(handleCommand);
+        if (!g_bleServer.start("AbbyConnector")) {
+            std::cerr << "Warning: Failed to start BLE server" << std::endl;
+        }
+    }
+    
+    // TCP Server
     int server_fd, new_socket;
     struct sockaddr_in address;
     int opt = 1;
@@ -155,6 +236,9 @@ int main() {
     }
     
     std::cout << "[AbbyConnector] Listening on port " << PORT << std::endl;
+    if (bleEnabled) {
+        std::cout << "[AbbyConnector] BLE GATT server also active" << std::endl;
+    }
     
     while (true) {
         if ((new_socket = accept(server_fd, (struct sockaddr*)&address, &addrlen)) < 0) {

@@ -1,6 +1,7 @@
 #include "ContentCatalog.hpp"
 #include <fstream>
 #include <iostream>
+#include <sstream>
 
 using json = nlohmann::json;
 
@@ -46,4 +47,19 @@ std::vector<std::string> ContentCatalog::getTrackCodes() const {
         codes.push_back(kv.first);
     }
     return codes;
+}
+
+std::string ContentCatalog::toJson() const {
+    std::ostringstream ss;
+    ss << "{\"tracks\":[";
+    bool first = true;
+    for (const auto& kv : m_tracks) {
+        if (!first) ss << ",";
+        first = false;
+        ss << "{\"id\":\"" << kv.first << "\",";
+        ss << "\"path\":\"" << kv.second.path << "\",";
+        ss << "\"permission\":\"" << kv.second.requiredPermission << "\"}";
+    }
+    ss << "]}";
+    return ss.str();
 }

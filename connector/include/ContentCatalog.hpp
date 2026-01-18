@@ -19,6 +19,9 @@ public:
     bool resolve(const std::string& code, TrackInfo& outInfo);
     
     std::vector<std::string> getTrackCodes() const;
+    
+    // Serialize catalog to JSON
+    std::string toJson() const;
 
 private:
     std::map<std::string, TrackInfo> m_tracks;

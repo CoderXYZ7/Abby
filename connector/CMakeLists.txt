@@ -10,18 +10,20 @@ find_package(PkgConfig REQUIRED)
 # Includes
 include_directories(
     include
-    ../../libs/abby-client/include
+    ../client/include
     ${OPENSSL_INCLUDE_DIR}
 )
 
 # Source files
-file(GLOB SOURCES "src/*.cpp")
+set(SOURCES
+    src/main.cpp
+    src/JwtValidator.cpp
+    src/ContentCatalog.cpp
+    src/BleServer.cpp
+    src/PlaylistManager.cpp
+)
 
 # JSON library (header only)
-# We need to ensure nlohmann/json is available or included. 
-# For now, assuming standard include path or we'll fetch it.
-# Actually, let's just Assume we might need to download it or it is in the system.
-# Checking if nlohmann/json is installed usually works via pkg-config or find_package if installed.
 find_package(nlohmann_json QUIET)
 
 # Executable
@@ -33,10 +35,18 @@ target_link_libraries(AbbyConnector
     OpenSSL::SSL
     OpenSSL::Crypto
     pthread
-    # Link against the shared library we built earlier
-    ${CMAKE_SOURCE_DIR}/../../libs/abby-client/build/libabby-client.so 
+    # Link against the shared library
+    ${CMAKE_SOURCE_DIR}/../client/build/libabby-client.so 
 )
 
 if(nlohmann_json_FOUND)
     target_link_libraries(AbbyConnector PRIVATE nlohmann_json::nlohmann_json)
 endif()
+
+# Optional: BlueZ for BLE (when building on Raspberry Pi)
+# pkg_check_modules(BLUEZ bluez)
+# if(BLUEZ_FOUND)
+#     target_include_directories(AbbyConnector PRIVATE ${BLUEZ_INCLUDE_DIRS})
+#     target_link_libraries(AbbyConnector PRIVATE ${BLUEZ_LIBRARIES})
+#     target_compile_definitions(AbbyConnector PRIVATE HAS_BLUEZ)
+# endif()
