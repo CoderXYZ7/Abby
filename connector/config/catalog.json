@@ -1,12 +1,19 @@
 {
-  "tracks": {
-    "TRACK_001": {
-      "path": "/home/maintainer/Dev/Piramid/device/audio/track1.pira",
-      "required_permission": "TRACK_001"
+  "tracks": [
+    {
+      "id": "TRACK_001",
+      "title": "Test Track 1",
+      "path": "\/tmp\/test.pira"
     },
-    "TRACK_002": {
-      "path": "/home/maintainer/Dev/Piramid/device/audio/track2.pira",
-      "required_permission": "TRACK_002"
+    {
+      "id": "1",
+      "title": "1",
+      "path": "\/audio\/track1.pira"
+    },
+    {
+      "id": "2",
+      "title": "2",
+      "path": "\/audio\/track2.pira"
     }
-  }
+  ]
 }

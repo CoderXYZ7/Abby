@@ -9,6 +9,7 @@ class ContentCatalog {
 public:
     struct TrackInfo {
         std::string path;
+        std::string title;
         std::string requiredPermission;
     };
 

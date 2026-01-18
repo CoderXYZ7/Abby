@@ -16,11 +16,14 @@ bool ContentCatalog::load(const std::string& path) {
         f >> j;
         
         if (j.contains("tracks")) {
-            for (auto& [code, info] : j["tracks"].items()) {
+            for (auto& item : j["tracks"]) {
+                if (!item.contains("id")) continue;
+                std::string code = item["id"];
                 TrackInfo ti;
-                ti.path = info["path"];
-                if (info.contains("required_permission")) {
-                    ti.requiredPermission = info["required_permission"];
+                ti.path = item["path"];
+                if (item.contains("title")) ti.title = item["title"];
+                if (item.contains("required_permission")) {
+                    ti.requiredPermission = item["required_permission"];
                 }
                 m_tracks[code] = ti;
             }
@@ -57,6 +60,7 @@ std::string ContentCatalog::toJson() const {
         if (!first) ss << ",";
         first = false;
         ss << "{\"id\":\"" << kv.first << "\",";
+        ss << "\"title\":\"" << kv.second.title << "\",";
         ss << "\"path\":\"" << kv.second.path << "\",";
         ss << "\"permission\":\"" << kv.second.requiredPermission << "\"}";
     }
