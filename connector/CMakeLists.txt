@@ -7,11 +7,15 @@ set(CMAKE_CXX_STANDARD 17)
 find_package(OpenSSL REQUIRED)
 find_package(PkgConfig REQUIRED)
 
+# Find libsystemd for sd-bus (BLE D-Bus support)
+pkg_check_modules(SYSTEMD REQUIRED libsystemd)
+
 # Includes
 include_directories(
     include
     ../client/include
     ${OPENSSL_INCLUDE_DIR}
+    ${SYSTEMD_INCLUDE_DIRS}
 )
 
 # Source files
@@ -35,6 +39,7 @@ target_link_libraries(AbbyConnector
     OpenSSL::SSL
     OpenSSL::Crypto
     pthread
+    ${SYSTEMD_LIBRARIES}
     # Link against the shared library
     ${CMAKE_SOURCE_DIR}/../client/build/libabby-client.so 
 )
@@ -42,11 +47,3 @@ target_link_libraries(AbbyConnector
 if(nlohmann_json_FOUND)
     target_link_libraries(AbbyConnector PRIVATE nlohmann_json::nlohmann_json)
 endif()
-
-# Optional: BlueZ for BLE (when building on Raspberry Pi)
-# pkg_check_modules(BLUEZ bluez)
-# if(BLUEZ_FOUND)
-#     target_include_directories(AbbyConnector PRIVATE ${BLUEZ_INCLUDE_DIRS})
-#     target_link_libraries(AbbyConnector PRIVATE ${BLUEZ_LIBRARIES})
-#     target_compile_definitions(AbbyConnector PRIVATE HAS_BLUEZ)
-# endif()
