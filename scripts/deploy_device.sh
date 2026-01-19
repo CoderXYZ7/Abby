@@ -1,9 +1,10 @@
 #!/bin/bash
 #
-# Interactive Device Deployment Script
+# Device Deployment Script
 # Configures AbbyPlayer for a specific device installation.
 #
-# Usage: sudo ./scripts/deploy_device.sh
+# Usage: sudo ./scripts/deploy_device.sh <device_name> <audio_path>
+#   or:  sudo ./scripts/deploy_device.sh (interactive)
 #
 
 set -e
@@ -25,14 +26,23 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-# 1. Device Configuration
-echo "--- CONFIGURATION ---"
-read -p "Enter Device Name (Bluetooth Name) [AbbyConnector]: " DEVICE_NAME
-DEVICE_NAME=${DEVICE_NAME:-AbbyConnector}
+# 1. Device Configuration - from args or interactive
+if [ -n "$1" ] && [ -n "$2" ]; then
+    # Command line mode
+    DEVICE_NAME="$1"
+    SOURCE_AUDIO_DIR="$2"
+    echo "Device Name: $DEVICE_NAME"
+    echo "Audio Path:  $SOURCE_AUDIO_DIR"
+else
+    # Interactive mode
+    echo "--- CONFIGURATION ---"
+    read -p "Enter Device Name (Bluetooth Name) [AbbyConnector]: " DEVICE_NAME
+    DEVICE_NAME=${DEVICE_NAME:-AbbyConnector}
 
-echo ""
-echo "Enter path to source audio files (mp3/wav/etc):"
-read -e -p "> " SOURCE_AUDIO_DIR
+    echo ""
+    echo "Enter path to source audio files (mp3/wav/etc):"
+    read -e -p "> " SOURCE_AUDIO_DIR
+fi
 
 if [ ! -d "$SOURCE_AUDIO_DIR" ]; then
     echo "Error: Directory '$SOURCE_AUDIO_DIR' does not exist."
@@ -41,8 +51,11 @@ fi
 
 echo ""
 echo "Deploying as '$DEVICE_NAME' with audio from '$SOURCE_AUDIO_DIR'..."
-echo "Press Enter to continue or Ctrl+C to cancel."
-read
+if [ -z "$1" ]; then
+    echo "Press Enter to continue or Ctrl+C to cancel."
+    read
+fi
+
 
 # 2. Install Dependencies
 echo ""
