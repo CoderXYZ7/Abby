@@ -278,10 +278,10 @@ for file in "$SOURCE_AUDIO_DIR"/*; do
                 echo "Encrypting: $filename -> ${filename_noext}.pira"
                 
                 if "$ENCRYPT_TOOL" "$file" "$outfile"; then
-                    ((COUNT++))
+                    COUNT=$((COUNT+1))
                 else
                     echo "ERROR: Failed to encrypt $filename"
-                    ((ERRORS++))
+                    ERRORS=$((ERRORS+1))
                 fi
                 ;;
             *)
