@@ -68,11 +68,24 @@ echo "Dependencies installed."
 # 3. Build ALL Binaries (clean build for correct architecture)
 echo ""
 echo "--- BUILDING ALL BINARIES ---"
-echo "Building all components for this architecture (this may take 5-10 minutes)..."
+echo "Building all components for this architecture (this may take 10-20 minutes)..."
 
 # Use -j1 to avoid OOM on low-memory devices (RPi Zero, etc.)
 MAKE_JOBS=1
 
+# Create temporary swap if RAM is low (< 1GB free)
+FREE_MEM=$(free -m | awk '/Mem:/ {print $7}')
+if [ "$FREE_MEM" -lt 1024 ]; then
+    echo "Low memory detected ($FREE_MEM MB). Creating temporary swap..."
+    SWAP_FILE="/tmp/abby_build_swap"
+    if [ ! -f "$SWAP_FILE" ]; then
+        dd if=/dev/zero of="$SWAP_FILE" bs=1M count=1024 status=progress 2>/dev/null || dd if=/dev/zero of="$SWAP_FILE" bs=1M count=1024
+        chmod 600 "$SWAP_FILE"
+        mkswap "$SWAP_FILE"
+    fi
+    swapon "$SWAP_FILE" 2>/dev/null || true
+    echo "Swap enabled."
+fi
 # Build Player (includes encrypt_util and crypt library)
 echo "Building AbbyPlayer..."
 # Clean all build directories to avoid cross-architecture issues
