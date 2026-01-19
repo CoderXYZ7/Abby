@@ -178,27 +178,43 @@ int main(int argc, char* argv[]) {
     std::cout << "[AbbyConnector] Starting..." << std::endl;
     
     // Parse command line flags
+    // Parse command line flags
     bool bleEnabled = false;
     bool debugMode = false;
+    std::string deviceName = "AbbyConnector";
+
     for (int i = 1; i < argc; i++) {
-        if (std::string(argv[i]) == "--ble") {
+        std::string arg = argv[i];
+        if (arg == "--ble") {
             bleEnabled = true;
-        } else if (std::string(argv[i]) == "--debug") {
+        } else if (arg == "--debug") {
             debugMode = true;
-        } else if (std::string(argv[i]) == "--help" || std::string(argv[i]) == "-h") {
+        } else if (arg == "--name" && i + 1 < argc) {
+            deviceName = argv[++i];
+        } else if (arg == "--help" || arg == "-h") {
             std::cout << "Usage: AbbyConnector [options]\n"
                       << "Options:\n"
-                      << "  --debug   Interactive CLI mode (no TCP server)\n"
-                      << "  --ble     Enable BLE GATT server\n"
-                      << "  --help    Show this help\n";
+                      << "  --debug             Interactive CLI mode (no TCP server)\n"
+                      << "  --ble               Enable BLE/Bluetooth server\n"
+                      << "  --name <name>       Set Bluetooth device name (default: AbbyConnector)\n"
+                      << "  --help              Show this help\n";
             return 0;
         }
     }
     
     // Load catalog
     if (!g_catalog.load("connector/config/catalog.json")) {
-        std::cerr << "Failed to load catalog!" << std::endl;
-        return 1;
+        // Fallback to environment variable if relative path fails
+        const char* envPath = std::getenv("CATALOG_PATH");
+        if (envPath) {
+            if (!g_catalog.load(envPath)) {
+                std::cerr << "Failed to load catalog from CATALOG_PATH: " << envPath << std::endl;
+                return 1;
+            }
+        } else {
+            std::cerr << "Failed to load catalog! (checked connector/config/catalog.json and CATALOG_PATH)" << std::endl;
+            return 1;
+        }
     }
     
     // Connect to AbbyPlayer daemon
@@ -212,7 +228,7 @@ int main(int argc, char* argv[]) {
     if (bleEnabled) {
         std::cout << "[AbbyConnector] BLE mode enabled" << std::endl;
         g_bleServer.setCommandHandler(handleCommand);
-        if (!g_bleServer.start("AbbyConnector")) {
+        if (!g_bleServer.start(deviceName)) {
             std::cerr << "Warning: Failed to start BLE server" << std::endl;
         }
     }
