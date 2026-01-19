@@ -99,6 +99,11 @@ cmake ..
 make -j$MAKE_JOBS
 cd "$ROOT_DIR"
 
+# Copy libabby-client.so to location expected by connector
+echo "Copying libabby-client.so..."
+mkdir -p "$ROOT_DIR/client/build"
+cp "$ROOT_DIR/player/build/abby-client/libabby-client.so" "$ROOT_DIR/client/build/"
+
 # Build Connector
 echo "Building AbbyConnector..."
 rm -rf "$ROOT_DIR/connector/build"
