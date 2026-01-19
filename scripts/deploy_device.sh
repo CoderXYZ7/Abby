@@ -65,35 +65,116 @@ apt-get install -y \
 
 echo "Dependencies installed."
 
-# 3. Build Tools (clean build for correct architecture)
+# 3. Build ALL Binaries (clean build for correct architecture)
 echo ""
-echo "--- BUILDING TOOLS ---"
-echo "Building encryption utility for this architecture..."
+echo "--- BUILDING ALL BINARIES ---"
+echo "Building all components for this architecture (this may take a few minutes)..."
 
-# Clean old CMake cache to avoid cross-machine issues
+# Build Player (includes encrypt_util and crypt library)
+echo "Building AbbyPlayer..."
 rm -rf "$ROOT_DIR/player/build"
 mkdir -p "$ROOT_DIR/player/build"
 cd "$ROOT_DIR/player/build"
 cmake ..
-make encrypt_util
+make -j$(nproc)
 cd "$ROOT_DIR"
 
-# Verify it runs
-if ! "$ROOT_DIR/player/build/encrypt_util" 2>&1 | grep -q "Usage"; then
-    echo "Warning: encrypt_util may not work correctly"
-fi
-echo "Encryption utility ready."
+# Build Connector
+echo "Building AbbyConnector..."
+rm -rf "$ROOT_DIR/connector/build"
+mkdir -p "$ROOT_DIR/connector/build"
+cd "$ROOT_DIR/connector/build"
+cmake ..
+make -j$(nproc)
+cd "$ROOT_DIR"
 
-# 3. Setup Environment (Config & Services)
+echo "All binaries built successfully."
+
+# 4. Setup Environment (Install binaries and services)
 echo ""
 echo "--- SETTING UP ENVIRONMENT ---"
-# Run base setup if binary missing
-if [ ! -f "$INSTALL_DIR/AbbyConnector" ]; then
-    echo "Running base setup..."
-    "$SCRIPT_DIR/setup.sh"
-else
-    echo "Base installation found. Updating config..."
-fi
+
+# Create directories
+mkdir -p "$INSTALL_DIR"
+mkdir -p "$CONFIG_DIR"
+mkdir -p "$AUDIO_DIR"
+
+# Install freshly built binaries
+echo "Installing binaries..."
+cp "$ROOT_DIR/player/build/AbbyPlayer" "$INSTALL_DIR/"
+cp "$ROOT_DIR/connector/build/AbbyConnector" "$INSTALL_DIR/"
+cp "$ROOT_DIR/connector/scripts/bt_agent.py" "$INSTALL_DIR/"
+chmod +x "$INSTALL_DIR/AbbyPlayer"
+chmod +x "$INSTALL_DIR/AbbyConnector"
+chmod +x "$INSTALL_DIR/bt_agent.py"
+
+# Install config
+cp "$ROOT_DIR/connector/config/catalog.json" "$CONFIG_DIR/"
+
+# Install systemd services
+cat > /etc/systemd/system/abby-player.service << 'EOF'
+[Unit]
+Description=AbbyPlayer Audio Daemon
+After=sound.target
+
+[Service]
+Type=simple
+ExecStart=/opt/abby/AbbyPlayer --daemon
+WorkingDirectory=/opt/abby
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat > /etc/systemd/system/abby-connector.service << 'EOF'
+[Unit]
+Description=AbbyConnector Bluetooth Server
+After=abby-player.service bluetooth.target
+Wants=abby-player.service bluetooth.target
+
+[Service]
+Type=simple
+ExecStart=/opt/abby/AbbyConnector --ble
+WorkingDirectory=/opt/abby
+Restart=always
+RestartSec=5
+Environment=CATALOG_PATH=/etc/abby/catalog.json
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat > /etc/systemd/system/bt-agent.service << 'EOF'
+[Unit]
+Description=Bluetooth Auto-Accept Agent
+After=bluetooth.target
+Wants=bluetooth.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/abby/bt_agent.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Configure Bluetooth compat mode
+mkdir -p /etc/systemd/system/bluetooth.service.d
+cat > /etc/systemd/system/bluetooth.service.d/compat.conf << 'EOF'
+[Service]
+ExecStart=
+ExecStart=/usr/libexec/bluetooth/bluetoothd --compat
+EOF
+
+# Enable services
+systemctl daemon-reload
+systemctl enable bluetooth bt-agent abby-player abby-connector
+
+echo "Environment setup complete."
 
 # Update service with device name
 SERVICE_FILE="/etc/systemd/system/abby-connector.service"
