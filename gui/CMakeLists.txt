@@ -5,10 +5,10 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 # Add AbbyCrypt library
-add_subdirectory(../../device/AbbyCrypt ${CMAKE_CURRENT_BINARY_DIR}/AbbyCrypt)
+add_subdirectory(../crypt ${CMAKE_CURRENT_BINARY_DIR}/AbbyCrypt)
 
 # Add abby-client library
-add_subdirectory(../../libs/abby-client ${CMAKE_CURRENT_BINARY_DIR}/abby-client)
+add_subdirectory(../client ${CMAKE_CURRENT_BINARY_DIR}/abby-client)
 
 # Find FLTK
 find_package(FLTK REQUIRED)
@@ -23,7 +23,7 @@ target_link_libraries(abby-gui
 )
 
 target_include_directories(abby-gui PRIVATE 
-    ../../device/AbbyCrypt/include
-    ../../libs/abby-client/include
+    ../crypt/include
+    ../client/include
     ${FLTK_INCLUDE_DIRS}
 )
