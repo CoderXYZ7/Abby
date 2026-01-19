@@ -77,7 +77,8 @@ MAKE_JOBS=1
 FREE_MEM=$(free -m | awk '/Mem:/ {print $7}')
 if [ "$FREE_MEM" -lt 1024 ]; then
     echo "Low memory detected ($FREE_MEM MB). Creating temporary swap..."
-    SWAP_FILE="/tmp/abby_build_swap"
+    # Use /var/tmp (on disk) instead of /tmp (tmpfs)
+    SWAP_FILE="/var/tmp/abby_build_swap"
     if [ ! -f "$SWAP_FILE" ]; then
         dd if=/dev/zero of="$SWAP_FILE" bs=1M count=1024 status=progress 2>/dev/null || dd if=/dev/zero of="$SWAP_FILE" bs=1M count=1024
         chmod 600 "$SWAP_FILE"
