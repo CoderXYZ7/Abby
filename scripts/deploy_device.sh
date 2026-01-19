@@ -132,6 +132,10 @@ echo "All binaries built successfully."
 echo ""
 echo "--- SETTING UP ENVIRONMENT ---"
 
+# Stop existing services first (to avoid "Text file busy" error)
+echo "Stopping existing services..."
+systemctl stop abby-player abby-connector bt-agent 2>/dev/null || true
+
 # Create directories
 mkdir -p "$INSTALL_DIR"
 mkdir -p "$CONFIG_DIR"
