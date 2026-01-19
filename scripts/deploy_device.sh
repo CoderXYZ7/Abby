@@ -150,8 +150,7 @@ chmod +x "$INSTALL_DIR/AbbyPlayer"
 chmod +x "$INSTALL_DIR/AbbyConnector"
 chmod +x "$INSTALL_DIR/bt_agent.py"
 
-# Install config
-cp "$ROOT_DIR/connector/config/catalog.json" "$CONFIG_DIR/"
+# Note: catalog.json will be generated later from encrypted audio files
 
 # Install systemd services
 cat > /etc/systemd/system/abby-player.service << 'EOF'
