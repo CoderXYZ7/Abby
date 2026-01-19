@@ -8,7 +8,7 @@
     {
       "id": "1",
       "title": "1",
-      "path": "\/audio\/track1.pira"
+      "path": "./audio\/track1.pira"
     },
     {
       "id": "2",

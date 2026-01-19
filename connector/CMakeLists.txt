@@ -39,6 +39,7 @@ target_link_libraries(AbbyConnector
     OpenSSL::SSL
     OpenSSL::Crypto
     pthread
+    bluetooth
     ${SYSTEMD_LIBRARIES}
     # Link against the shared library
     ${CMAKE_SOURCE_DIR}/../client/build/libabby-client.so 
