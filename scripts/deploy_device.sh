@@ -68,7 +68,10 @@ echo "Dependencies installed."
 # 3. Build ALL Binaries (clean build for correct architecture)
 echo ""
 echo "--- BUILDING ALL BINARIES ---"
-echo "Building all components for this architecture (this may take a few minutes)..."
+echo "Building all components for this architecture (this may take 5-10 minutes)..."
+
+# Use -j1 to avoid OOM on low-memory devices (RPi Zero, etc.)
+MAKE_JOBS=1
 
 # Build Player (includes encrypt_util and crypt library)
 echo "Building AbbyPlayer..."
@@ -76,7 +79,7 @@ rm -rf "$ROOT_DIR/player/build"
 mkdir -p "$ROOT_DIR/player/build"
 cd "$ROOT_DIR/player/build"
 cmake ..
-make -j$(nproc)
+make -j$MAKE_JOBS
 cd "$ROOT_DIR"
 
 # Build Connector
@@ -85,7 +88,7 @@ rm -rf "$ROOT_DIR/connector/build"
 mkdir -p "$ROOT_DIR/connector/build"
 cd "$ROOT_DIR/connector/build"
 cmake ..
-make -j$(nproc)
+make -j$MAKE_JOBS
 cd "$ROOT_DIR"
 
 echo "All binaries built successfully."
