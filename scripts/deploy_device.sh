@@ -3,7 +3,7 @@
 # Device Deployment Script
 # Configures AbbyPlayer for a specific device installation.
 #
-# Usage: sudo ./scripts/deploy_device.sh <device_name> <audio_path>
+# Usage: sudo ./scripts/deploy_device.sh <device_name> <audio_path> [--skip-build]
 #   or:  sudo ./scripts/deploy_device.sh (interactive)
 #
 
@@ -14,6 +14,7 @@ ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 INSTALL_DIR="/opt/abby"
 CONFIG_DIR="/etc/abby"
 AUDIO_DIR="/var/lib/abby/audio"
+SKIP_BUILD=false
 
 echo "======================================"
 echo "   AbbyPlayer Device Deployment Tool  "
@@ -26,13 +27,25 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
+# Parse arguments
+DEVICE_NAME=""
+SOURCE_AUDIO_DIR=""
+
+for arg in "$@"; do
+    if [ "$arg" = "--skip-build" ]; then
+        SKIP_BUILD=true
+    elif [ -z "$DEVICE_NAME" ]; then
+        DEVICE_NAME="$arg"
+    elif [ -z "$SOURCE_AUDIO_DIR" ]; then
+        SOURCE_AUDIO_DIR="$arg"
+    fi
+done
+
 # 1. Device Configuration - from args or interactive
-if [ -n "$1" ] && [ -n "$2" ]; then
-    # Command line mode
-    DEVICE_NAME="$1"
-    SOURCE_AUDIO_DIR="$2"
+if [ -n "$DEVICE_NAME" ] && [ -n "$SOURCE_AUDIO_DIR" ]; then
     echo "Device Name: $DEVICE_NAME"
     echo "Audio Path:  $SOURCE_AUDIO_DIR"
+    echo "Skip Build:  $SKIP_BUILD"
 else
     # Interactive mode
     echo "--- CONFIGURATION ---"
@@ -42,6 +55,11 @@ else
     echo ""
     echo "Enter path to source audio files (mp3/wav/etc):"
     read -e -p "> " SOURCE_AUDIO_DIR
+    
+    read -p "Skip compilation? [y/N]: " SKIP_INPUT
+    if [ "$SKIP_INPUT" = "y" ] || [ "$SKIP_INPUT" = "Y" ]; then
+        SKIP_BUILD=true
+    fi
 fi
 
 if [ ! -d "$SOURCE_AUDIO_DIR" ]; then
@@ -51,82 +69,94 @@ fi
 
 echo ""
 echo "Deploying as '$DEVICE_NAME' with audio from '$SOURCE_AUDIO_DIR'..."
-if [ -z "$1" ]; then
-    echo "Press Enter to continue or Ctrl+C to cancel."
-    read
-fi
 
-
-# 2. Install Dependencies
+# List source files for debugging
 echo ""
-echo "--- INSTALLING DEPENDENCIES ---"
-apt-get update
-apt-get install -y \
-    build-essential \
-    cmake \
-    pkg-config \
-    libssl-dev \
-    libsdl2-dev \
-    libglew-dev \
-    libbluetooth-dev \
-    libsystemd-dev \
-    python3 \
-    python3-pip \
-    bluetooth \
-    bluez \
-    || { echo "Failed to install dependencies"; exit 1; }
-
-echo "Dependencies installed."
-
-# 3. Build ALL Binaries (clean build for correct architecture)
+echo "Source audio files:"
+ls -la "$SOURCE_AUDIO_DIR"
 echo ""
-echo "--- BUILDING ALL BINARIES ---"
-echo "Building all components for this architecture (this may take 10-20 minutes)..."
 
-# Use -j1 to avoid OOM on low-memory devices (RPi Zero, etc.)
-MAKE_JOBS=1
+if [ "$SKIP_BUILD" = false ]; then
+    # 2. Install Dependencies
+    echo ""
+    echo "--- INSTALLING DEPENDENCIES ---"
+    apt-get update
+    apt-get install -y \
+        build-essential \
+        cmake \
+        pkg-config \
+        libssl-dev \
+        libsdl2-dev \
+        libglew-dev \
+        libbluetooth-dev \
+        libdbus-1-dev \
+        libsystemd-dev \
+        libasound2-dev \
+        bluez \
+        bluetooth \
+        python3-dbus \
+        python3-gi
 
-# Create temporary swap if RAM is low (< 1GB free)
-FREE_MEM=$(free -m | awk '/Mem:/ {print $7}')
-if [ "$FREE_MEM" -lt 1024 ]; then
-    echo "Low memory detected ($FREE_MEM MB). Creating temporary swap..."
-    # Use /var/tmp (on disk) instead of /tmp (tmpfs)
-    SWAP_FILE="/var/tmp/abby_build_swap"
-    if [ ! -f "$SWAP_FILE" ]; then
-        dd if=/dev/zero of="$SWAP_FILE" bs=1M count=1024 status=progress 2>/dev/null || dd if=/dev/zero of="$SWAP_FILE" bs=1M count=1024
-        chmod 600 "$SWAP_FILE"
-        mkswap "$SWAP_FILE"
+    echo "Dependencies installed."
+
+    # Set make jobs to 1 for low-memory devices
+    MAKE_JOBS=1
+
+    # Create temporary swap if RAM is low (< 1GB free)
+    FREE_MEM=$(free -m | awk '/Mem:/ {print $7}')
+    if [ "$FREE_MEM" -lt 1024 ]; then
+        echo "Low memory detected ($FREE_MEM MB). Creating temporary swap..."
+        SWAP_FILE="/var/tmp/abby_build_swap"
+        if [ ! -f "$SWAP_FILE" ]; then
+            dd if=/dev/zero of="$SWAP_FILE" bs=1M count=1024 status=progress 2>/dev/null || dd if=/dev/zero of="$SWAP_FILE" bs=1M count=1024
+            chmod 600 "$SWAP_FILE"
+            mkswap "$SWAP_FILE"
+        fi
+        swapon "$SWAP_FILE" 2>/dev/null || true
+        echo "Swap enabled."
     fi
-    swapon "$SWAP_FILE" 2>/dev/null || true
-    echo "Swap enabled."
+
+    # Build Player (includes encrypt_util and crypt library)
+    echo "Building AbbyPlayer..."
+    rm -rf "$ROOT_DIR/player/build"
+    rm -rf "$ROOT_DIR/client/build"
+    rm -rf "$ROOT_DIR/crypt/build"
+    mkdir -p "$ROOT_DIR/player/build"
+    cd "$ROOT_DIR/player/build"
+    cmake ..
+    make -j$MAKE_JOBS
+    cd "$ROOT_DIR"
+
+    # Copy libabby-client.so to location expected by connector
+    echo "Copying libabby-client.so..."
+    mkdir -p "$ROOT_DIR/client/build"
+    cp "$ROOT_DIR/player/build/abby-client/libabby-client.so" "$ROOT_DIR/client/build/"
+
+    # Build Connector
+    echo "Building AbbyConnector..."
+    rm -rf "$ROOT_DIR/connector/build"
+    mkdir -p "$ROOT_DIR/connector/build"
+    cd "$ROOT_DIR/connector/build"
+    cmake ..
+    make -j$MAKE_JOBS
+    cd "$ROOT_DIR"
+
+    echo "All binaries built successfully."
+else
+    echo ""
+    echo "--- SKIPPING BUILD (--skip-build) ---"
+    
+    # Check binaries exist
+    if [ ! -f "$ROOT_DIR/player/build/AbbyPlayer" ]; then
+        echo "ERROR: AbbyPlayer not found. Run without --skip-build first."
+        exit 1
+    fi
+    if [ ! -f "$ROOT_DIR/connector/build/AbbyConnector" ]; then
+        echo "ERROR: AbbyConnector not found. Run without --skip-build first."
+        exit 1
+    fi
+    echo "Using existing binaries."
 fi
-# Build Player (includes encrypt_util and crypt library)
-echo "Building AbbyPlayer..."
-# Clean all build directories to avoid cross-architecture issues
-rm -rf "$ROOT_DIR/player/build"
-rm -rf "$ROOT_DIR/client/build"
-rm -rf "$ROOT_DIR/crypt/build"
-mkdir -p "$ROOT_DIR/player/build"
-cd "$ROOT_DIR/player/build"
-cmake ..
-make -j$MAKE_JOBS
-cd "$ROOT_DIR"
-
-# Copy libabby-client.so to location expected by connector
-echo "Copying libabby-client.so..."
-mkdir -p "$ROOT_DIR/client/build"
-cp "$ROOT_DIR/player/build/abby-client/libabby-client.so" "$ROOT_DIR/client/build/"
-
-# Build Connector
-echo "Building AbbyConnector..."
-rm -rf "$ROOT_DIR/connector/build"
-mkdir -p "$ROOT_DIR/connector/build"
-cd "$ROOT_DIR/connector/build"
-cmake ..
-make -j$MAKE_JOBS
-cd "$ROOT_DIR"
-
-echo "All binaries built successfully."
 
 # 4. Setup Environment (Install binaries and services)
 echo ""
@@ -203,14 +233,6 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
-# Configure Bluetooth compat mode
-mkdir -p /etc/systemd/system/bluetooth.service.d
-cat > /etc/systemd/system/bluetooth.service.d/compat.conf << 'EOF'
-[Service]
-ExecStart=
-ExecStart=/usr/libexec/bluetooth/bluetoothd --compat
-EOF
-
 # Enable services
 systemctl daemon-reload
 systemctl enable bluetooth bt-agent abby-player abby-connector
@@ -221,9 +243,6 @@ echo "Environment setup complete."
 SERVICE_FILE="/etc/systemd/system/abby-connector.service"
 echo "Updating $SERVICE_FILE with Device Name: $DEVICE_NAME"
 
-# We use sed to replaceExecStart line
-# Match: ExecStart=/opt/abby/AbbyConnector --ble ...
-# Replace with: ExecStart=/opt/abby/AbbyConnector --ble --name "DEVICE_NAME"
 sed -i "s|ExecStart=.*|ExecStart=/opt/abby/AbbyConnector --ble --name \"$DEVICE_NAME\"|" "$SERVICE_FILE"
 
 systemctl daemon-reload
@@ -239,11 +258,18 @@ rm -rf "$AUDIO_DIR"/*
 
 COUNT=0
 ERRORS=0
+
+# Debug: Show what we're iterating over
+echo "Scanning: $SOURCE_AUDIO_DIR/*"
+
 for file in "$SOURCE_AUDIO_DIR"/*; do
+    echo "Found: $file"
     if [ -f "$file" ]; then
         filename=$(basename "$file")
         ext="${filename##*.}"
         filename_noext="${filename%.*}"
+        
+        echo "  -> File: $filename, Extension: $ext"
         
         # Only encrypt audio files
         case "$ext" in
@@ -271,6 +297,10 @@ echo "Processed $COUNT files successfully ($ERRORS errors)."
 echo ""
 echo "--- UPDATING CATALOG ---"
 python3 "$SCRIPT_DIR/generate_catalog.py" "$AUDIO_DIR" "$CONFIG_DIR/catalog.json"
+
+# Show generated catalog
+echo "Generated catalog:"
+cat "$CONFIG_DIR/catalog.json"
 
 # 6. Restart
 echo ""
