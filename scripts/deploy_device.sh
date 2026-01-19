@@ -231,23 +231,38 @@ echo "--- PROCESSING AUDIO FILES ---"
 echo "Encrypting files to $AUDIO_DIR..."
 ENCRYPT_TOOL="$ROOT_DIR/player/build/encrypt_util"
 
-# Clean old audio
-rm -f "$AUDIO_DIR"/*.pira
+# Clean entire audio directory (remove old encrypted AND unencrypted files)
+rm -rf "$AUDIO_DIR"/*
 
 COUNT=0
+ERRORS=0
 for file in "$SOURCE_AUDIO_DIR"/*; do
     if [ -f "$file" ]; then
         filename=$(basename "$file")
+        ext="${filename##*.}"
         filename_noext="${filename%.*}"
-        outfile="$AUDIO_DIR/${filename_noext}.pira"
         
-        echo "Encrypting: $filename -> ${filename_noext}.pira"
-        "$ENCRYPT_TOOL" "$file" "$outfile"
-        ((COUNT++))
+        # Only encrypt audio files
+        case "$ext" in
+            mp3|wav|ogg|flac|aac|m4a)
+                outfile="$AUDIO_DIR/${filename_noext}.pira"
+                echo "Encrypting: $filename -> ${filename_noext}.pira"
+                
+                if "$ENCRYPT_TOOL" "$file" "$outfile"; then
+                    ((COUNT++))
+                else
+                    echo "ERROR: Failed to encrypt $filename"
+                    ((ERRORS++))
+                fi
+                ;;
+            *)
+                echo "Skipping non-audio file: $filename"
+                ;;
+        esac
     fi
 done
 
-echo "Processed $COUNT files."
+echo "Processed $COUNT files successfully ($ERRORS errors)."
 
 # 5. Generate Catalog
 echo ""
