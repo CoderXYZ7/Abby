@@ -75,7 +75,10 @@ MAKE_JOBS=1
 
 # Build Player (includes encrypt_util and crypt library)
 echo "Building AbbyPlayer..."
+# Clean all build directories to avoid cross-architecture issues
 rm -rf "$ROOT_DIR/player/build"
+rm -rf "$ROOT_DIR/client/build"
+rm -rf "$ROOT_DIR/crypt/build"
 mkdir -p "$ROOT_DIR/player/build"
 cd "$ROOT_DIR/player/build"
 cmake ..
