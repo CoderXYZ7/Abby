@@ -220,14 +220,18 @@ EOF
 cat > /etc/systemd/system/bt-agent.service << 'EOF'
 [Unit]
 Description=Bluetooth Auto-Accept Agent
-After=bluetooth.target
-Wants=bluetooth.target
+After=bluetooth.service
+Requires=bluetooth.service
+# Restart bt-agent if bluetooth restarts
+PartOf=bluetooth.service
 
 [Service]
 Type=simple
+# Wait for bluetoothd to fully initialize
+ExecStartPre=/bin/sleep 2
 ExecStart=/usr/bin/python3 /opt/abby/bt_agent.py
 Restart=always
-RestartSec=5
+RestartSec=3
 
 [Install]
 WantedBy=multi-user.target

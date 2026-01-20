@@ -30,7 +30,40 @@ class AutoAcceptAgent(dbus.service.Object):
     @dbus.service.method("org.bluez.Agent1", in_signature="os", out_signature="")
     def AuthorizeService(self, device, uuid):
         print(f"[Agent] AuthorizeService: {device} UUID={uuid}")
-        # Auto-authorize all services
+        
+        # Only allow Serial Port Profile (SPP) for Abby commands
+        # Reject audio profiles (A2DP, AVRCP, HFP, etc.)
+        ALLOWED_UUIDS = [
+            "00001101-0000-1000-8000-00805f9b34fb",  # SPP - Serial Port Profile
+        ]
+        
+        BLOCKED_UUIDS = [
+            "0000110a-0000-1000-8000-00805f9b34fb",  # A2DP Source
+            "0000110b-0000-1000-8000-00805f9b34fb",  # A2DP Sink  
+            "0000110d-0000-1000-8000-00805f9b34fb",  # A2DP
+            "0000110e-0000-1000-8000-00805f9b34fb",  # AVRCP
+            "0000110c-0000-1000-8000-00805f9b34fb",  # AVRCP Controller
+            "0000111e-0000-1000-8000-00805f9b34fb",  # Handsfree
+            "0000111f-0000-1000-8000-00805f9b34fb",  # Handsfree AG
+            "00001112-0000-1000-8000-00805f9b34fb",  # Headset AG
+            "00001108-0000-1000-8000-00805f9b34fb",  # Headset
+        ]
+        
+        uuid_lower = uuid.lower()
+        
+        if uuid_lower in [u.lower() for u in BLOCKED_UUIDS]:
+            print(f"[Agent] REJECTING audio service: {uuid}")
+            raise dbus.exceptions.DBusException(
+                "org.bluez.Error.Rejected",
+                "Audio services not allowed"
+            )
+        
+        if uuid_lower in [u.lower() for u in ALLOWED_UUIDS]:
+            print(f"[Agent] Allowing SPP service: {uuid}")
+            return
+        
+        # For unknown services, allow them (could be RFCOMM variants)
+        print(f"[Agent] Allowing unknown service: {uuid}")
         return
 
     @dbus.service.method("org.bluez.Agent1", in_signature="o", out_signature="s")
