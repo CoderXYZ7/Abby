@@ -233,9 +233,37 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
+# Create Bluetooth rfkill unblock service (runs before bluetooth.service)
+cat > /etc/systemd/system/bluetooth-rfkill.service << 'EOF'
+[Unit]
+Description=Unblock Bluetooth rfkill
+Before=bluetooth.service
+RequiredBy=bluetooth.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/rfkill unblock bluetooth
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Create bluetooth.service override to ensure adapter is up and discoverable
+mkdir -p /etc/systemd/system/bluetooth.service.d
+cat > /etc/systemd/system/bluetooth.service.d/abby.conf << 'EOF'
+[Service]
+ExecStart=
+ExecStart=/usr/libexec/bluetooth/bluetoothd --compat
+ExecStartPost=/bin/sleep 1
+ExecStartPost=/usr/bin/hciconfig hci0 up
+ExecStartPost=/usr/bin/hciconfig hci0 piscan
+ExecStartPost=/usr/bin/hciconfig hci0 name '%H'
+EOF
+
 # Enable services
 systemctl daemon-reload
-systemctl enable bluetooth bt-agent abby-player abby-connector
+systemctl enable bluetooth-rfkill bluetooth bt-agent abby-player abby-connector
 
 echo "Environment setup complete."
 
@@ -304,10 +332,28 @@ cat "$CONFIG_DIR/catalog.json"
 
 # 6. Restart
 echo ""
+echo "--- CONFIGURING BLUETOOTH ---"
+# Unblock rfkill
+rfkill unblock bluetooth 2>/dev/null || true
+
+# Restart bluetooth stack with proper init
+systemctl restart bluetooth-rfkill
+systemctl restart bluetooth
+sleep 2
+
+# Ensure adapter is up and discoverable
+hciconfig hci0 up 2>/dev/null || true
+hciconfig hci0 piscan 2>/dev/null || true
+hciconfig hci0 name "$DEVICE_NAME" 2>/dev/null || true
+
+echo "Bluetooth configured: $(hciconfig hci0 | grep -E 'UP|DOWN' | head -1)"
+
+echo ""
 echo "--- RESTARTING SERVICES ---"
-systemctl restart abby-player
-systemctl restart abby-connector
 systemctl restart bt-agent
+systemctl restart abby-player
+sleep 1
+systemctl restart abby-connector
 
 echo ""
 echo "======================================"

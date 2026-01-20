@@ -57,8 +57,24 @@ void BleServer::stop() {
 bool BleServer::setupBluetoothClassic() {
     std::cout << "[BT] Configuring Bluetooth Classic..." << std::endl;
     
+    // Unblock rfkill first (in case Bluetooth is soft-blocked)
+    int ret = system("sudo rfkill unblock bluetooth 2>/dev/null");
+    if (ret != 0) {
+        std::cerr << "[BT] Warning: rfkill unblock failed (may not be installed)" << std::endl;
+    } else {
+        std::cout << "[BT] Unblocked rfkill for Bluetooth" << std::endl;
+    }
+    
+    // Bring up the HCI interface
+    ret = system("sudo hciconfig hci0 up 2>/dev/null");
+    if (ret != 0) {
+        std::cerr << "[BT] Warning: hciconfig hci0 up failed" << std::endl;
+    } else {
+        std::cout << "[BT] Brought up hci0 interface" << std::endl;
+    }
+    
     // Power on adapter
-    int ret = system("sudo btmgmt power on 2>/dev/null");
+    ret = system("sudo btmgmt power on 2>/dev/null");
     if (ret != 0) {
         std::cerr << "[BT] Warning: btmgmt power on failed" << std::endl;
     }

@@ -123,8 +123,12 @@ systemctl enable abby-player
 systemctl enable abby-connector
 
 echo "[7/7] Starting services..."
+# Unblock rfkill in case Bluetooth is soft-blocked
+rfkill unblock bluetooth 2>/dev/null || true
 systemctl restart bluetooth
 sleep 2
+# Ensure adapter is up
+hciconfig hci0 up 2>/dev/null || true
 systemctl start bt-agent
 systemctl start abby-player
 sleep 1
