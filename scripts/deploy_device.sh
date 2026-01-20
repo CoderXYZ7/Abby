@@ -250,15 +250,18 @@ WantedBy=multi-user.target
 EOF
 
 # Create bluetooth.service override to ensure adapter is up and discoverable
+# Note: - prefix means "ignore failures" so the service doesn't crash
 mkdir -p /etc/systemd/system/bluetooth.service.d
+# Remove old override if present (from setup.sh)
+rm -f /etc/systemd/system/bluetooth.service.d/compat.conf
 cat > /etc/systemd/system/bluetooth.service.d/abby.conf << 'EOF'
 [Service]
 ExecStart=
 ExecStart=/usr/libexec/bluetooth/bluetoothd --compat
-ExecStartPost=/bin/sleep 1
-ExecStartPost=/usr/bin/hciconfig hci0 up
-ExecStartPost=/usr/bin/hciconfig hci0 piscan
-ExecStartPost=/usr/bin/hciconfig hci0 name '%H'
+ExecStartPost=-/bin/sleep 1
+ExecStartPost=-/usr/sbin/rfkill unblock bluetooth
+ExecStartPost=-/usr/bin/hciconfig hci0 up
+ExecStartPost=-/usr/bin/hciconfig hci0 piscan
 EOF
 
 # Enable services
