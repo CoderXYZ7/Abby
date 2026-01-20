@@ -202,11 +202,18 @@ EOF
 cat > /etc/systemd/system/abby-connector.service << 'EOF'
 [Unit]
 Description=AbbyConnector Bluetooth Server
-After=abby-player.service bluetooth.target
-Wants=abby-player.service bluetooth.target
+After=abby-player.service bluetooth.service bt-agent.service
+Requires=bluetooth.service
+Wants=abby-player.service bt-agent.service
 
 [Service]
 Type=simple
+# Initialize Bluetooth before starting connector
+ExecStartPre=-/usr/sbin/rfkill unblock bluetooth
+ExecStartPre=-/usr/bin/hciconfig hci0 up
+ExecStartPre=-/usr/bin/hciconfig hci0 piscan
+ExecStartPre=-/usr/bin/sdptool add SP
+ExecStartPre=/bin/sleep 1
 ExecStart=/opt/abby/AbbyConnector --ble
 WorkingDirectory=/opt/abby
 Restart=always
